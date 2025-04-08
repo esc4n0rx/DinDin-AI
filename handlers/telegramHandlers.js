@@ -552,6 +552,8 @@ async function handleReport(bot, msg, periodType) {
 }
 
 
+// Versão simplificada da função handleReminderCreation em handlers/telegramHandlers.js
+
 async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
   const chatId = msg.chat.id;
   
@@ -561,52 +563,18 @@ async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
     // Extrair informações do lembrete
     const { description, dueDate, dueTime, isRecurring, recurrencePattern } = analysis;
     
-    // Usar a data atual do servidor para calcular a data correta do lembrete
-    const serverNow = new Date();
-    console.log(`Data atual do servidor: ${serverNow.toISOString()}`);
+    // Combinar data e hora para criar o objeto de data
+    // Garantindo que temos valores válidos (o LLM já deve ter usado a data atual do servidor)
+    const dueDateStr = dueDate || new Date().toISOString().split('T')[0];
+    const dueTimeStr = dueTime || '09:00';
     
-    // Extrair componentes da data do lembrete
-    const [year, month, day] = dueDate.split('-').map(num => parseInt(num, 10));
-    const [hour, minute] = dueTime.split(':').map(num => parseInt(num, 10));
-    
-    // Criar um objeto de data corrigido
-    const dueDateObj = new Date(serverNow);
-    
-    // Ajustar para a data solicitada pelo usuário mas mantendo o ano/mês atuais quando necessário
-    dueDateObj.setDate(day);
-    
-    // Se o mês foi especificado no comando, ajustar o mês
-    // O mês em JS é baseado em zero (0-11), então subtraímos 1
-    if (month) {
-      dueDateObj.setMonth(month - 1);
-    }
-    
-    // Se o ano foi especificado no comando, ajustar o ano
-    if (year) {
-      dueDateObj.setFullYear(year);
-    }
-    
-    // Ajustar para a hora solicitada
-    dueDateObj.setHours(hour, minute, 0, 0);
-    
-    // Verificar se a data já passou (é anterior à data atual)
-    if (dueDateObj < serverNow) {
-      // Se o dia solicitado já passou neste mês, avançar para o próximo mês
-      if (!month) { // Se o mês não foi explicitamente especificado
-        dueDateObj.setMonth(dueDateObj.getMonth() + 1);
-        console.log(`Data ajustada para o próximo mês: ${dueDateObj.toISOString()}`);
-      } 
-      // Se o mês foi especificado mas a data ainda é passada, provavelmente queremos o próximo ano
-      else if (dueDateObj < serverNow) {
-        dueDateObj.setFullYear(dueDateObj.getFullYear() + 1);
-        console.log(`Data ajustada para o próximo ano: ${dueDateObj.toISOString()}`);
-      }
-    }
-    
-    console.log(`Data final do lembrete: ${dueDateObj.toISOString()}`);
+    // Criar o objeto de data
+    const dueDateObj = new Date(`${dueDateStr}T${dueTimeStr}`);
+    console.log(`Data do lembrete: ${dueDateObj.toISOString()}`);
     
     // Verificar se a data é válida
     if (isNaN(dueDateObj.getTime())) {
+      console.error(`Data inválida criada: ${dueDateStr}T${dueTimeStr}`);
       return bot.sendMessage(
         chatId,
         '❌ Não consegui entender a data do lembrete. Por favor, tente novamente com uma data mais clara.',
@@ -614,7 +582,7 @@ async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
       );
     }
     
-    // Criar o lembrete no banco de dados com a data corrigida
+    // Criar o lembrete no banco de dados
     const reminder = await reminderService.createReminder(
       user.id,
       description,

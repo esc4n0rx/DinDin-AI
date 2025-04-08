@@ -1,9 +1,26 @@
+// services/llm.js - versão modificada para incluir data atual no prompt
+
 const Groq = require('groq-sdk')
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
-// Sistema de prompt atualizado para incluir lembretes
-const SYSTEM_PROMPT = `Você é um assistente financeiro especializado em ajudar com o registro de transações financeiras e lembretes de pagamento. 
+// Função para analisar mensagens
+async function analyzeMessage(message) {
+  try {
+    // Obter a data atual do servidor
+    const now = new Date();
+    const currentDateISO = now.toISOString();
+    const formattedDate = now.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+    
+    // Sistema de prompt atualizado para incluir lembretes e a data atual
+    const systemPrompt = `Você é um assistente financeiro especializado em ajudar com o registro de transações financeiras e lembretes de pagamento.
+
+IMPORTANTE: A DATA ATUAL É ${formattedDate} (${currentDateISO}). Utilize esta data como referência para todos os cálculos de data.
+
 Sua tarefa é analisar a mensagem do usuário e determinar se:
 1. Contém informações sobre uma transação financeira, OU
 2. Contém um pedido para criar um lembrete de pagamento ou evento financeiro
@@ -14,7 +31,7 @@ Se a mensagem contiver informações sobre uma transação financeira, você dev
 2. Extrair o valor da transação
 3. Extrair a descrição ou título da transação
 4. Identificar a categoria mais adequada
-5. Identificar a data da transação (se mencionada) ou usar data atual
+5. Identificar a data da transação (se mencionada) ou usar data atual (${formattedDate})
 
 Responda APENAS em formato JSON:
 {
@@ -29,8 +46,13 @@ Responda APENAS em formato JSON:
 ## CASO 2: SE A MENSAGEM FOR UM PEDIDO DE LEMBRETE
 Se a mensagem for um pedido para criar um lembrete, você deve:
 1. Extrair a descrição do que deve ser lembrado
-2. Identificar a data e hora do lembrete
+2. Identificar a data do lembrete com base na data atual (${formattedDate})
 3. Verificar se há indicação de recorrência
+
+Alguns exemplos importantes para datas de lembretes:
+- Se a mensagem diz "dia 15" e hoje é dia ${now.getDate()}, deve ser dia 15 do mês atual (${now.getMonth() + 1}) se ainda não passou, ou do próximo mês se já passou
+- Se a mensagem diz "amanhã", deve ser ${new Date(now.getTime() + 86400000).toISOString().split('T')[0]}
+- NUNCA defina uma data no passado
 
 Responda APENAS em formato JSON:
 {
@@ -49,35 +71,21 @@ Se a mensagem não for nem uma transação nem um pedido de lembrete, responda:
 }
 
 ## DICAS PARA ENTENDER REFERÊNCIAS DE TEMPO:
-- Se o usuário mencionar "ontem", "anteontem", "semana passada", calcule a data corretamente
-- Se mencionar "semana que vem", "próximo mês", ou datas futuras, use a data indicada
-- Se mencionar apenas "dia X" sem mês, assuma o mês atual se for um dia futuro, ou o próximo mês se for um dia que já passou
+- Data atual: ${formattedDate} (${currentDateISO})
+- Dia atual: ${now.getDate()}
+- Mês atual: ${now.getMonth() + 1}
+- Ano atual: ${now.getFullYear()}
+- Se o usuário mencionar "amanhã", use ${new Date(now.getTime() + 86400000).toISOString().split('T')[0]}
+- Se mencionar "semana que vem", use ${new Date(now.getTime() + 7 * 86400000).toISOString().split('T')[0]}
+- Se mencionar apenas "dia X" e esse dia já passou no mês atual, use o dia X do próximo mês
 - Entenda meses pelo nome, como "janeiro", "fevereiro", etc.
-- Exemplos de pedidos de lembrete:
-  - "Me lembre de pagar a conta de luz dia 15"
-  - "Lembrete para renovar o seguro no dia 3 de maio"
-  - "Criar lembrete para o pagamento do aluguel todo dia 10" (recorrente)
-  - "Me avise sobre a fatura do cartão dia 25 às 10h"
 
-## DICAS PARA CATEGORIAS DE TRANSAÇÕES:
-- Inclua palavras-chave como "mercado", "supermercado", "feira", "restaurante" na categoria "Alimentação"
-- "Gasolina", "uber", "ônibus", "metrô", "transporte", "passagem", "corrida" normalmente são "Transporte"
-- "Aluguel", "luz", "água", "gás", "condomínio", "internet", "telefone" são "Moradia"
-- "Remédio", "farmácia", "consulta", "médico", "dentista", "academia" são "Saúde"
-- "Curso", "escola", "faculdade", "livro", "mensalidade" são "Educação"
-- "Cinema", "teatro", "show", "viagem", "festa", "passeio" são "Lazer"
-- "Roupa", "sapato", "celular", "computador", "eletrônico" são "Compras"
-- "Assinatura", "serviço", "streaming", "taxa", "tarifa" são "Serviços"
+IMPORTANTE: Você deve APENAS retornar o JSON no formato especificado, sem texto adicional ou explicações.`;
 
-IMPORTANTE: Você deve APENAS retornar o JSON no formato especificado, sem texto adicional ou explicações.`
-
-// Função para analisar mensagens
-async function analyzeMessage(message) {
-  try {
     // Envia a mensagem para o Groq com o sistema de prompt
     const chatCompletion = await groq.chat.completions.create({
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: message }
       ],
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
@@ -93,6 +101,8 @@ async function analyzeMessage(message) {
       // Tenta fazer o parse do JSON
       const parsedResponse = JSON.parse(response);
       
+      console.log('Resposta do LLM:', parsedResponse);
+      
       // Compatibilidade com versão anterior (isTransaction)
       if (parsedResponse.type === 'transaction') {
         return {
@@ -101,17 +111,20 @@ async function analyzeMessage(message) {
           amount: parsedResponse.amount,
           description: parsedResponse.description,
           category: parsedResponse.category,
-          date: parsedResponse.date
+          date: parsedResponse.date || now.toISOString().split('T')[0]
         }
       } else if (parsedResponse.type === 'reminder') {
+        // Garantir que dueDate nunca seja vazio
+        const dueDate = parsedResponse.dueDate || now.toISOString().split('T')[0];
+        
         return {
           isTransaction: false,
           isReminder: true,
           description: parsedResponse.description,
-          dueDate: parsedResponse.dueDate,
+          dueDate: dueDate,
           dueTime: parsedResponse.dueTime || "09:00", 
-          isRecurring: parsedResponse.isRecurring,
-          recurrencePattern: parsedResponse.recurrencePattern
+          isRecurring: parsedResponse.isRecurring || false,
+          recurrencePattern: parsedResponse.recurrencePattern || ''
         }
       } else {
         return { 
