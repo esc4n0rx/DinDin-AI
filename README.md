@@ -24,7 +24,7 @@ Um bot assistente financeiro para Telegram que usa LLM (Groq API) para processar
 
 1. Clone o repositório:
 ```bash
-git clone https://github.com/seu-usuario/dindin-ai.git
+git clone https://github.com/esc4n0rx/DinDin-AI
 cd dindin-ai
 ```
 
