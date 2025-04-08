@@ -10,8 +10,7 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey)
 
-
-
+// Função auxiliar para garantir formato ISO de datas
 function ensureISODate(date) {
   if (!date) return null;
   
@@ -36,8 +35,6 @@ function ensureISODate(date) {
   
   return null;
 }
-
-
 
 module.exports = {
   supabase,
@@ -145,7 +142,7 @@ module.exports = {
     
     console.log(`Transação criada: ID ${data.id}, Data: ${data.transaction_date}`);
     return data;
-  }
+  },
   
   async getUserTransactions(userId, startDate, endDate, type = null) {
     // Converter datas para ISO se necessário
@@ -187,9 +184,9 @@ module.exports = {
     
     console.log(`Encontradas ${data.length} transações`);
     return data;
-  }
+  },
   
-  async function getSummary(userId, startDate, endDate) {
+  async getSummary(userId, startDate, endDate) {
     console.log(`Gerando resumo para userId: ${userId}, período: ${startDate} a ${endDate}`);
     try {
       // Busca todas as transações do período
@@ -255,3 +252,4 @@ module.exports = {
       throw error;
     }
   }
+}
