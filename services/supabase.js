@@ -10,6 +10,35 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey)
 
+
+
+function ensureISODate(date) {
+  if (!date) return null;
+  
+  if (date instanceof Date) {
+    return date.toISOString();
+  }
+  
+  if (typeof date === 'string') {
+    // Verifica se é uma string de data ISO válida
+    if (date.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+      return date;
+    }
+    
+    // Tenta converter outras strings de data para ISO
+    try {
+      return new Date(date).toISOString();
+    } catch (e) {
+      console.error(`Data inválida: ${date}`, e);
+      return null;
+    }
+  }
+  
+  return null;
+}
+
+
+
 module.exports = {
   supabase,
   
@@ -90,6 +119,12 @@ module.exports = {
   
   // Transações
   async createTransaction(userId, categoryId, amount, description, type, date = new Date()) {
+    // Garantir que a data é sempre baseada na hora atual do servidor
+    const transactionDate = date || new Date();
+    const isoDate = ensureISODate(transactionDate);
+    
+    console.log(`Criando transação com data: ${isoDate}`);
+    
     const { data, error } = await supabase
       .from('transactions')
       .insert({
@@ -97,125 +132,126 @@ module.exports = {
         category_id: categoryId,
         amount: amount,
         description: description,
-        transaction_date: date,
+        transaction_date: isoDate,
         type: type
       })
       .select()
-      .single()
+      .single();
     
     if (error) {
-      console.error('Error creating transaction:', error)
-      throw error
+      console.error('Error creating transaction:', error);
+      throw error;
     }
     
-    return data
-  },
+    console.log(`Transação criada: ID ${data.id}, Data: ${data.transaction_date}`);
+    return data;
+  }
   
-async function getUserTransactions(userId, startDate, endDate, type = null) {
+  async getUserTransactions(userId, startDate, endDate, type = null) {
+    // Converter datas para ISO se necessário
+    const isoStartDate = startDate ? ensureISODate(startDate) : null;
+    const isoEndDate = endDate ? ensureISODate(endDate) : null;
+    
+    console.log(`Buscando transações - Período: ${isoStartDate || 'sem início'} até ${isoEndDate || 'sem fim'}`);
+    
+    let query = supabase
+      .from('transactions')
+      .select(`
+        *,
+        categories:category_id (
+          name,
+          icon
+        )
+      `)
+      .eq('user_id', userId)
+      .order('transaction_date', { ascending: false });
+    
+    if (isoStartDate) {
+      query = query.gte('transaction_date', isoStartDate);
+    }
+    
+    if (isoEndDate) {
+      query = query.lte('transaction_date', isoEndDate);
+    }
+    
+    if (type) {
+      query = query.eq('type', type);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('Error fetching transactions:', error);
+      throw error;
+    }
+    
+    console.log(`Encontradas ${data.length} transações`);
+    return data;
+  }
+  
+  async function getSummary(userId, startDate, endDate) {
+    console.log(`Gerando resumo para userId: ${userId}, período: ${startDate} a ${endDate}`);
     try {
-      console.log(`Buscando transações - UserId: ${userId}, StartDate: ${startDate}, EndDate: ${endDate}, Type: ${type}`);
+      // Busca todas as transações do período
+      const transactions = await this.getUserTransactions(userId, startDate, endDate);
+      console.log(`Transações encontradas para resumo: ${transactions.length}`);
       
-      let query = supabase
-        .from('transactions')
-        .select(`
-          *,
-          categories:category_id (
-            name,
-            icon
-          )
-        `)
-        .eq('user_id', userId)
-        .order('transaction_date', { ascending: false });
+      // Log das transações para debug
+      if (transactions.length > 0) {
+        console.log('Amostra das transações no resumo:');
+        transactions.slice(0, 3).forEach(tx => {
+          console.log(`ID: ${tx.id}, Data: ${tx.transaction_date}, Tipo: ${tx.type}, Valor: ${tx.amount}, Descrição: ${tx.description}`);
+        });
+      }
       
-      // Verificação de debug - apenas para identificar a causa do bug
-      // É importante registrar todas as transações do usuário antes de aplicar filtros
-      const { data: allUserTxs, error: debugError } = await supabase
-        .from('transactions')
-        .select('id, transaction_date, amount, description, type')
-        .eq('user_id', userId);
+      // Calcula totais
+      const summary = {
+        income: 0,
+        expense: 0,
+        balance: 0,
+        categories: {}
+      };
+      
+      // Para garantir que valores são tratados corretamente como números
+      const parseAmount = (amount) => {
+        if (typeof amount === 'string') {
+          return parseFloat(amount) || 0;
+        }
+        return amount || 0;
+      };
+      
+      transactions.forEach(tx => {
+        const amount = parseAmount(tx.amount);
         
-      if (debugError) {
-        console.error('Debug error fetching all transactions:', debugError);
-      } else {
-        console.log(`Total de transações do usuário sem filtro: ${allUserTxs.length}`);
-        console.log('Amostra de transações:', allUserTxs.slice(0, 3));
-      }
-      
-      // Garantir que startDate e endDate são strings ISO
-      if (startDate) {
-        if (startDate instanceof Date) {
-          startDate = startDate.toISOString();
+        if (tx.type === 'income') {
+          summary.income += amount;
+        } else {
+          summary.expense += amount;
         }
-        console.log(`Aplicando filtro início: ${startDate}`);
-        query = query.gte('transaction_date', startDate);
-      }
-      
-      if (endDate) {
-        if (endDate instanceof Date) {
-          endDate = endDate.toISOString();
+        
+        // Agrupa por categoria
+        const categoryName = tx.categories?.name || 'Sem categoria';
+        const categoryIcon = tx.categories?.icon || '';
+        
+        if (!summary.categories[categoryName]) {
+          summary.categories[categoryName] = {
+            total: 0,
+            icon: categoryIcon,
+            type: tx.type
+          };
         }
-        console.log(`Aplicando filtro fim: ${endDate}`);
-        query = query.lte('transaction_date', endDate);
-      }
+        
+        summary.categories[categoryName].total += amount;
+      });
       
-      if (type) {
-        console.log(`Aplicando filtro tipo: ${type}`);
-        query = query.eq('type', type);
-      }
+      summary.balance = summary.income - summary.expense;
       
-      // Executar a consulta final
-      const { data, error } = await query;
+      console.log(`Resumo calculado: Receitas: ${summary.income}, Despesas: ${summary.expense}, Saldo: ${summary.balance}`);
+      console.log(`Categorias: ${Object.keys(summary.categories).length}`);
       
-      if (error) {
-        console.error('Error fetching transactions:', error);
-        throw error;
-      }
-      
-      console.log(`Transações encontradas após filtros: ${data.length}`);
-      console.log('Amostra de transações filtradas:', data.slice(0, 3));
-      return data;
+      return summary;
     } catch (error) {
-      console.error('Erro completo ao buscar transações:', error);
+      console.error('Erro ao gerar resumo:', error);
       throw error;
     }
   }
-  
-  async getSummary(userId, startDate, endDate) {
-    // Busca todas as transações do período
-    const transactions = await this.getUserTransactions(userId, startDate, endDate)
-    
-    // Calcula totais
-    const summary = {
-      income: 0,
-      expense: 0,
-      balance: 0,
-      categories: {}
-    }
-    
-    transactions.forEach(tx => {
-      if (tx.type === 'income') {
-        summary.income += parseFloat(tx.amount)
-      } else {
-        summary.expense += parseFloat(tx.amount)
-      }
-      
-      // Agrupa por categoria
-      const categoryName = tx.categories?.name || 'Sem categoria'
-      const categoryIcon = tx.categories?.icon || ''
-      
-      if (!summary.categories[categoryName]) {
-        summary.categories[categoryName] = {
-          total: 0,
-          icon: categoryIcon,
-          type: tx.type
-        }
-      }
-      
-      summary.categories[categoryName].total += parseFloat(tx.amount)
-    })
-    
-    summary.balance = summary.income - summary.expense
-    
-    return summary
-  }
-}
