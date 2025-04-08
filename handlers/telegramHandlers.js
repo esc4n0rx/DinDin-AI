@@ -358,6 +358,8 @@ async function handleMessage(bot, msg) {
     
     // Encontra a categoria no banco de dados
     const categoryData = await supabaseService.getCategoryByName(category, type)
+
+    const currentDate = new Date();
     
     // Cria a transação
     const transaction = await supabaseService.createTransaction(
@@ -366,7 +368,7 @@ async function handleMessage(bot, msg) {
       amount,
       description,
       type,
-      date ? new Date(date) : new Date()
+      currentDate
     )
     
     // Personaliza a mensagem de confirmação com base no tipo e personalidade
