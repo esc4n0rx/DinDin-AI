@@ -4,6 +4,7 @@ const supabaseService = require('../services/supabase')
 const llmService = require('../services/llm')
 const userConfigService = require('../services/userConfig')
 const personalityService = require('../services/personalityResponses')
+const reminderService = require('../services/reminderService');
 
 // Configura o moment para PT-BR
 moment.locale('pt-br')
@@ -16,6 +17,7 @@ const commands = [
   { command: 'hoje', description: 'Ver transações de hoje' },
   { command: 'semana', description: 'Ver transações da semana' },
   { command: 'mes', description: 'Ver transações do mês' },
+  { command: 'lembretes', description: 'Ver seus lembretes pendentes' },
   { command: 'reset', description: 'Apagar todos os seus dados e começar de novo' },
   { command: 'ajuda', description: 'Mostrar comandos disponíveis' }
 
@@ -283,18 +285,16 @@ async function handleHelp(bot, msg) {
 /hoje - Ver transações de hoje
 /semana - Ver transações da semana
 /mes - Ver transações do mês
+/lembretes - Ver seus lembretes pendentes
 /configurar - Mudar minha personalidade
 /ajuda - Mostrar esta mensagem
 
-✏️ *Como registrar transações:*
-Basta escrever naturalmente! Por exemplo:
-• "Almoço no restaurante 32,50"
-• "Café 5,00"
-• "Salário mensal 2500"
-• "Recebi 100 de presente"
-  `
+✏️ *Como usar:*
+• *Para registrar transações*: Ex. "Almoço 25,90" ou "Recebi 100 de presente"
+• *Para criar lembretes*: Ex. "Me lembre de pagar a conta de luz dia 10" 
+  `;
   
-  return bot.sendMessage(msg.chat.id, helpMessage, { parse_mode: 'Markdown' })
+  return bot.sendMessage(msg.chat.id, helpMessage, { parse_mode: 'Markdown' });
 }
 
 // Handler para processar mensagens normais (potenciais transações)
@@ -343,6 +343,10 @@ async function handleMessage(bot, msg) {
     
     // Analisa a mensagem com o LLM
     const analysis = await llmService.analyzeMessage(userMsg)
+
+    if (analysis.isReminder) {
+      return handleReminderCreation(bot, msg, user, userConfig, analysis);
+    }
     
     // Se não for uma transação, responde com uma mensagem personalizada
     if (!analysis.isTransaction) {
@@ -547,6 +551,134 @@ async function handleReport(bot, msg, periodType) {
   }
 }
 
+
+async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
+  const chatId = msg.chat.id;
+  
+  try {
+    console.log('Processando criação de lembrete:', analysis);
+    
+    // Extrair informações do lembrete
+    const { description, dueDate, dueTime, isRecurring, recurrencePattern } = analysis;
+    
+    // Combinar data e hora
+    const dueDateObj = new Date(`${dueDate}T${dueTime}`);
+    
+    // Verificar se a data é válida
+    if (isNaN(dueDateObj.getTime())) {
+      return bot.sendMessage(
+        chatId,
+        '❌ Não consegui entender a data do lembrete. Por favor, tente novamente com uma data mais clara.',
+        { parse_mode: 'Markdown' }
+      );
+    }
+    
+    // Criar o lembrete no banco de dados
+    const reminder = await reminderService.createReminder(
+      user.id,
+      description,
+      dueDateObj,
+      isRecurring || false,
+      recurrencePattern
+    );
+    
+    // Preparar a mensagem de confirmação
+    const dateFormatted = moment(dueDateObj).format('DD/MM/YYYY [às] HH:mm');
+    const recurrenceText = isRecurring 
+      ? `\n⏰ Repetição: ${getRecurrenceText(recurrencePattern)}` 
+      : '';
+    
+    // Personalizar a resposta com base na personalidade do usuário
+    let confirmationMessage;
+    
+    if (userConfig.personality === userConfigService.PERSONALITIES.FRIENDLY) {
+      confirmationMessage = `✅ Lembrete criado com sucesso!\n\n📝 *${description}*\n📅 Data: ${dateFormatted}${recurrenceText}\n\nFique tranquilo, vou te avisar quando chegar a hora!`;
+    } else if (userConfig.personality === userConfigService.PERSONALITIES.SASSY) {
+      confirmationMessage = `✅ Beleza, vou lembrar você sobre isso!\n\n📝 *${description}*\n📅 Data: ${dateFormatted}${recurrenceText}\n\nMas vê se não esquece antes de eu te avisar, hein? 😜`;
+    } else {
+      confirmationMessage = `✅ Lembrete registrado.\n\n📝 *${description}*\n📅 Data: ${dateFormatted}${recurrenceText}\n\nVocê será notificado conforme solicitado.`;
+    }
+    
+    return bot.sendMessage(chatId, confirmationMessage, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('Error creating reminder:', error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao criar o lembrete. Por favor, tente novamente.');
+  }
+}
+
+// Função auxiliar para formatar o texto de recorrência
+function getRecurrenceText(pattern) {
+  switch (pattern) {
+    case 'daily':
+      return 'Diária';
+    case 'weekly':
+      return 'Semanal';
+    case 'monthly':
+      return 'Mensal';
+    case 'yearly':
+      return 'Anual';
+    default:
+      return pattern;
+  }
+}
+
+// Novo comando para listar lembretes
+async function handleListReminders(bot, msg) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  
+  try {
+    // Obter usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    
+    // Obter lembretes do usuário
+    const reminders = await reminderService.getUserReminders(user.id);
+    
+    if (reminders.length === 0) {
+      return bot.sendMessage(chatId, '📝 Você não tem lembretes pendentes.');
+    }
+    
+    // Agrupar lembretes por data
+    const remindersByDate = {};
+    
+    reminders.forEach(reminder => {
+      const date = moment(reminder.due_date).format('DD/MM/YYYY');
+      
+      if (!remindersByDate[date]) {
+        remindersByDate[date] = [];
+      }
+      
+      remindersByDate[date].push(reminder);
+    });
+    
+    // Construir a mensagem
+    let message = '📝 *Seus Lembretes Pendentes*\n\n';
+    
+    Object.keys(remindersByDate).sort().forEach(date => {
+      message += `📅 *${date}*\n`;
+      
+      remindersByDate[date].forEach(reminder => {
+        const time = moment(reminder.due_date).format('HH:mm');
+        const recurringIcon = reminder.is_recurring ? '🔄 ' : '';
+        
+        message += `  • ${recurringIcon}${time} - ${reminder.description}\n`;
+      });
+      
+      message += '\n';
+    });
+    
+    message += 'Para marcar um lembrete como concluído, envie "concluir lembrete X" ou "completar lembrete X".';
+    
+    return bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('Error listing reminders:', error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao listar seus lembretes.');
+  }
+}
+
+
+
+
 // Exporta os handlers
 module.exports = {
   commands,
@@ -557,5 +689,6 @@ module.exports = {
   handleMessage,
   handleReport,
   handleReset,
+  handleListReminders,
   createPersonalityKeyboard
 }

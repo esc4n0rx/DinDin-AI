@@ -4,6 +4,7 @@ const TelegramBot = require('node-telegram-bot-api')
 // Importando os serviços e handlers
 const handlers = require('./handlers/telegramHandlers')
 const userConfigService = require('./services/userConfig')
+const reminderScheduler = require('./services/reminderScheduler') // Nova importação
 
 // Token do Telegram
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN
@@ -58,6 +59,9 @@ async function initApp() {
     bot.onText(/\/mes/, (msg) => handlers.handleReport(bot, msg, 'month'))
     bot.onText(/\/reset/, (msg) => handlers.handleReset(bot, msg))
     
+    // Novo comando para lembretes
+    bot.onText(/\/lembretes/, (msg) => handlers.handleListReminders(bot, msg))
+    
     // Listener para mensagens normais (possíveis transações ou configurações)
     bot.on('message', (msg) => {
       // Ignora comandos
@@ -66,6 +70,28 @@ async function initApp() {
       // Processa mensagem normal
       handlers.handleMessage(bot, msg)
     })
+    
+    // Listener para callbacks de botões (necessário para os lembretes)
+    bot.on('callback_query', async (callbackQuery) => {
+      try {
+        // Formato do callback data: 'action:id'
+        const callbackData = callbackQuery.data
+        
+        if (callbackData.startsWith('complete_reminder:')) {
+          // Processa conclusão de lembrete
+          await reminderScheduler.handleReminderCompletion(bot, callbackQuery)
+        }
+        // Aqui podem ser adicionados outros tipos de callback no futuro
+      } catch (error) {
+        console.error('Erro ao processar callback:', error)
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Ocorreu um erro. Tente novamente.'
+        })
+      }
+    })
+    
+    // Inicializa o agendador de lembretes
+    reminderScheduler.setupReminderScheduler(bot)
     
     console.log('DinDin AI inicializado com sucesso! 🤖💰')
   } catch (error) {

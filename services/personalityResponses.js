@@ -135,11 +135,32 @@ Vamos nessa? Escolhe aí como você quer que eu te zoe:
         `Xiiii, lá se foram ${formatCurrency(amount)} em ${description}! Categoria: ${icon} ${name}. Vou fingir que não vi esse gasto 👀`,
         `Mais uma mordiiiida na sua conta! ${formatCurrency(amount)} pro ralo com ${description}. Categoria: ${icon} ${name}. Vou chamar esse app de "Onde Foi Meu Dinheiro?" 🤣`,
         `CARAMBA! Acabou de torrar ${formatCurrency(amount)} em ${description}?! Categoria: ${icon} ${name}. Tá feliz agora? 💸`,
-        `Adivinha quem acaba de ficar ${formatCurrency(amount)} mais pobre por causa de ${description}? VOCÊ! Categoria: ${icon} ${name}. Quem precisa de aposentadoria mesmo? 🙄`
+        `Adivinha quem acaba de ficar ${formatCurrency(amount)} mais pobre por causa de ${description}? VOCÊ! Categoria: ${icon} ${name}. Quem precisa de aposentadoria mesmo? 🙄`,
+        `✅ Lembrete anotado! "${description}" para ${dateFormatted}. Agora é só esperar eu te salvar da sua memória de peixinho dourado! 🐠`,
+         `Ok, vou te lembrar sobre "${description}" em ${dateFormatted}. Alguém tinha que fazer esse trabalho, né? 😜`,
+        `Beleza, anotei aqui: "${description}" para ${dateFormatted}. Se você esquecer, a culpa é sua. Se eu esquecer... bem, a culpa ainda é sua por confiar em um bot! 🤣`
       ]
       
       return responses[Math.floor(Math.random() * responses.length)]
     },
+
+    reminderNotification: (reminder) => {
+      const { description, dueDate } = reminder;
+      const dateFormatted = moment(dueDate).format('DD/MM/YYYY [às] HH:mm');
+      
+      const responses = [
+        `⏰ *TRIIIIM! ACORDA!*\n\nTá lembrado que você tinha que: "${description}"\nEra pra ser em: ${dateFormatted}\n\nNão diga que não te avisei! Eu sou mais confiável que seu cérebro! 🧠`,
+        `⏰ *Adivinhe quem lembrou?*\n\nEU, CLARO! Você com certeza esqueceu: "${description}"\nMarcado para: ${dateFormatted}\n\nVocê me agradece depois! 💅`,
+        `⏰ *Ei, distraído(a)!*\n\nSó eu não esqueci que: "${description}"\nHorário: ${dateFormatted}\n\nSorte a sua me ter como assistente, hein? 😏`
+      ];
+      
+      return responses[Math.floor(Math.random() * responses.length)];
+    },
+
+    reminderListEmpty: () => {
+      return "Uau, zero lembretes! Ou você é super organizado, ou está vivendo perigosamente sem planejar nada! Quer criar um lembrete? É só dizer 'Me avise sobre a conta de luz dia 10'.";
+    },
+
     
     // Confirmação de receita registrada
     incomeConfirmation: (transaction, category) => {
@@ -247,6 +268,26 @@ Selecione seu estilo de comunicação preferido:
       
       return `Receita registrada: ${formatCurrency(amount)} - ${description}. Categoria: ${icon} ${name}. Registro efetuado com sucesso.`
     },
+
+    reminderCreated: (reminder) => {
+      const { description, dueDate } = reminder;
+      const dateFormatted = moment(dueDate).format('DD/MM/YYYY [às] HH:mm');
+      
+      return `✅ Lembrete registrado: "${description}" programado para ${dateFormatted}. Você receberá uma notificação no momento apropriado.`;
+    },
+
+    reminderNotification: (reminder) => {
+      const { description, dueDate } = reminder;
+      const dateFormatted = moment(dueDate).format('DD/MM/YYYY [às] HH:mm');
+      
+      return `⏰ *Notificação Programada*\n\nAssunto: "${description}"\nData/Hora: ${dateFormatted}\n\nEsta é uma notificação automática conforme solicitado.`;
+    },
+    
+    reminderListEmpty: () => {
+      return "Não há lembretes pendentes registrados em seu nome. Para criar um novo lembrete, utilize um comando como 'Registrar lembrete para pagamento de fatura no dia 15'.";
+    }
+
+
     
     // Comentário sobre a saúde financeira (usado em relatórios)
     financialHealthComment: (income, expense, balance) => {
