@@ -1,0 +1,32 @@
+{
+  "name": "telegram-finance-assistant",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "nodemon main.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "finance",
+    "assistant",
+    "supabase",
+    "groq"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "Bot assistente financeiro no Telegram usando LLM e Supabase",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.4.7",
+    "groq-sdk": "^0.19.0",
+    "moment": "^2.29.4",
+    "node-telegram-bot-api": "^0.66.0",
+    "numeral": "^2.0.6",
+    "telegram-finance-assistant": "file:"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
