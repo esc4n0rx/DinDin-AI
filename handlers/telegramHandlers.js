@@ -20,6 +20,7 @@ const commands = [
   { command: 'mes', description: 'Ver transações do mês' },
   { command: 'lembretes', description: 'Ver seus lembretes pendentes' },
   { command: 'metas', description: 'Ver suas metas financeiras' },
+  { command: 'metadetalhes', description: 'Ver detalhes de uma meta específica' },
   { command: 'novameta', description: 'Criar uma nova meta financeira' },
   { command: 'reset', description: 'Apagar todos os seus dados e começar de novo' },
   { command: 'ajuda', description: 'Mostrar comandos disponíveis' },
@@ -1143,6 +1144,738 @@ async function handleDashboardMenu(bot, msg) {
   }
 }
 
+/**
+ * Manipula o comando para criar uma nova meta
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ */
+async function handleCreateGoal(bot, msg) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+
+  try {
+    // Obtém o usuário
+    const user = await supabaseService.getOrCreateUser(
+      telegramId,
+      msg.from.first_name,
+      msg.from.last_name,
+      msg.from.username
+    );
+
+    // Obtém a configuração do usuário para personalidade
+    const userConfig = await userConfigService.getUserConfig(user.id);
+
+    // Envia mensagem pedindo o nome da meta
+    await bot.sendMessage(
+      chatId,
+      'Para criar uma nova meta financeira, preciso de algumas informações. Primeiro, me diga o nome da meta (ex: "Viagem para o Japão", "Comprar um carro", etc.)'
+    );
+
+    // Define o estado do usuário como esperando o nome da meta
+    userStates.set(telegramId, { 
+      state: 'awaiting_goal_name', 
+      userId: user.id,
+      goalData: {}
+    });
+  } catch (error) {
+    console.error('Error in handleCreateGoal:', error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao iniciar a criação da meta.');
+  }
+}
+
+/**
+ * Manipula o comando para listar metas
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ */
+async function handleListGoals(bot, msg) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+
+  try {
+    // Obtém o usuário
+    const user = await supabaseService.getOrCreateUser(
+      telegramId,
+      msg.from.first_name,
+      msg.from.last_name,
+      msg.from.username
+    );
+
+    // Obtém a configuração do usuário para personalidade
+    const userConfig = await userConfigService.getUserConfig(user.id);
+
+    // Obtém as metas do usuário
+    const goals = await goalService.getUserGoals(user.id);
+
+    if (goals.length === 0) {
+      let message;
+      if (userConfig.personality === userConfigService.PERSONALITIES.FRIENDLY) {
+        message = 'Você ainda não tem nenhuma meta financeira definida. Use o comando /meta para criar uma!';
+      } else if (userConfig.personality === userConfigService.PERSONALITIES.SASSY) {
+        message = 'Zero metas, zero conquistas! Que tal definir alguma com /meta e dar um rumo pra esse dinheiro?';
+      } else {
+        message = 'Não foram encontradas metas financeiras registradas. Utilize o comando /meta para iniciar uma nova meta.';
+      }
+      return bot.sendMessage(chatId, message);
+    }
+
+    // Prepara a mensagem com a lista de metas
+    let message = '*Suas Metas Financeiras:*\n\n';
+
+    goals.forEach((goal, index) => {
+      const progress = Math.min((goal.current_amount / goal.target_amount) * 100, 100).toFixed(1);
+      const statusEmoji = goal.completed ? '✅' : '🔄';
+      const deadline = goal.deadline ? `até ${moment(goal.deadline).format('DD/MM/YYYY')}` : 'sem prazo';
+
+      message += `${index + 1}. ${statusEmoji} *${goal.name}*\n`;
+      message += `   💰 Progresso: ${formatCurrency(goal.current_amount)} de ${formatCurrency(goal.target_amount)} (${progress}%)\n`;
+      message += `   📅 ${deadline}\n\n`;
+    });
+
+    message += 'Para ver detalhes de uma meta específica, use */metadetalhes [número da meta]*';
+
+    return bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('Error in handleListGoals:', error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao listar suas metas.');
+  }
+}
+
+/**
+ * Manipula o comando para ver detalhes de uma meta específica
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ */
+async function handleGoalDetails(bot, msg) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  const text = msg.text;
+
+  try {
+    // Extrai o número da meta da mensagem
+    const parts = text.split(' ');
+    if (parts.length < 2) {
+      return bot.sendMessage(chatId, 'Por favor, especifique o número da meta. Exemplo: /metadetalhes 1');
+    }
+
+    const goalIndex = parseInt(parts[1]) - 1; // Converte para índice 0-based
+    if (isNaN(goalIndex) || goalIndex < 0) {
+      return bot.sendMessage(chatId, 'Por favor, forneça um número válido para a meta.');
+    }
+
+    // Obtém o usuário
+    const user = await supabaseService.getOrCreateUser(
+      telegramId,
+      msg.from.first_name,
+      msg.from.last_name,
+      msg.from.username
+    );
+
+    // Obtém a configuração do usuário para personalidade
+    const userConfig = await userConfigService.getUserConfig(user.id);
+
+    // Obtém as metas do usuário
+    const goals = await goalService.getUserGoals(user.id);
+
+    if (goals.length === 0) {
+      return bot.sendMessage(chatId, 'Você ainda não tem nenhuma meta financeira definida. Use o comando /meta para criar uma!');
+    }
+
+    if (goalIndex >= goals.length) {
+      return bot.sendMessage(chatId, `Você só tem ${goals.length} meta(s). Por favor, escolha um número entre 1 e ${goals.length}.`);
+    }
+
+    const goal = goals[goalIndex];
+
+    // Calcula informações adicionais
+    const progress = Math.min((goal.current_amount / goal.target_amount) * 100, 100).toFixed(1);
+    const remaining = Math.max(goal.target_amount - goal.current_amount, 0);
+
+    // Cria a barra de progresso
+    const progressBarLength = 10;
+    const filledBlocks = Math.round((progress / 100) * progressBarLength);
+    const emptyBlocks = progressBarLength - filledBlocks;
+    const progressBar = '🟩'.repeat(filledBlocks) + '⬜'.repeat(emptyBlocks);
+
+    let message = `*Detalhes da Meta: ${goal.name}*\n\n`;
+    message += `💰 *Objetivo:* ${formatCurrency(goal.target_amount)}\n`;
+    message += `💵 *Valor atual:* ${formatCurrency(goal.current_amount)}\n`;
+    message += `💸 *Valor restante:* ${formatCurrency(remaining)}\n`;
+    message += `📊 *Progresso:* ${progress}% ${progressBar}\n`;
+
+    if (goal.deadline) {
+      const deadline = moment(goal.deadline);
+      const today = moment();
+      const daysRemaining = deadline.diff(today, 'days');
+
+      message += `📅 *Prazo:* ${deadline.format('DD/MM/YYYY')}\n`;
+
+      if (daysRemaining > 0) {
+        message += `⏱️ *Dias restantes:* ${daysRemaining}\n`;
+
+        // Calcula quanto precisa economizar por dia/mês para atingir a meta
+        if (remaining > 0) {
+          const dailySaving = remaining / daysRemaining;
+          const monthlySaving = dailySaving * 30;
+
+          message += `\n*Para atingir a meta no prazo:*\n`;
+          message += `📆 *Por dia:* ${formatCurrency(dailySaving)}\n`;
+          message += `📆 *Por mês:* ${formatCurrency(monthlySaving)}\n`;
+        }
+      } else if (daysRemaining < 0) {
+        message += `⚠️ *Prazo expirado há ${Math.abs(daysRemaining)} dias*\n`;
+      } else {
+        message += `⚠️ *O prazo é hoje!*\n`;
+      }
+    } else {
+      message += `📅 *Prazo:* Sem prazo definido\n`;
+    }
+
+    message += `\n${goal.notes ? `📝 *Notas:* ${goal.notes}` : ''}`;
+
+    // Adiciona botões para ações na meta
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Adicionar Valor', callback_data: `goal_add:${goal.id}` },
+            { text: goal.completed ? 'Reabrir Meta' : 'Marcar como Concluída', callback_data: `goal_toggle:${goal.id}` }
+          ],
+          [
+            { text: 'Editar Meta', callback_data: `goal_edit:${goal.id}` },
+            { text: 'Excluir Meta', callback_data: `goal_delete:${goal.id}` }
+          ]
+        ]
+      }
+    };
+
+    return bot.sendMessage(chatId, message, { parse_mode: 'Markdown', ...keyboard });
+  } catch (error) {
+    console.error('Error in handleGoalDetails:', error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao exibir os detalhes da meta.');
+  }
+}
+
+/**
+ * Manipula etapas do fluxo de criação de metas
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ */
+async function handleGoalCreationSteps(bot, msg) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  const text = msg.text;
+
+  // Verifica o estado atual do usuário
+  const userState = userStates.get(telegramId);
+  if (!userState) return false; // Não está no fluxo de criação de meta
+
+  try {
+    switch (userState.state) {
+      case 'awaiting_goal_name':
+        // Salva o nome da meta e pede o valor alvo
+        userState.goalData.name = text;
+        userState.state = 'awaiting_goal_amount';
+        userStates.set(telegramId, userState);
+
+        await bot.sendMessage(
+          chatId,
+          'Ótimo! Agora, me diga qual é o valor total da meta. (ex: 5000)'
+        );
+        return true;
+
+      case 'awaiting_goal_amount': {
+        // Tenta converter o valor para número
+        const amount = parseFloat(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+
+        if (isNaN(amount) || amount <= 0) {
+          await bot.sendMessage(
+            chatId,
+            'Por favor, informe um valor válido maior que zero. (ex: 5000)'
+          );
+          return true;
+        }
+
+        // Salva o valor alvo e pergunta sobre o prazo
+        userState.goalData.target_amount = amount;
+        userState.state = 'awaiting_goal_deadline';
+        userStates.set(telegramId, userState);
+
+        await bot.sendMessage(
+          chatId,
+          'Entendi! Agora me diga se você tem um prazo para atingir essa meta. Informe a data no formato DD/MM/AAAA ou digite "sem prazo" se não houver um prazo definido.'
+        );
+        return true;
+      }
+
+      case 'awaiting_goal_deadline': {
+        let deadline = null;
+        if (text.toLowerCase() !== 'sem prazo') {
+          const dateParts = text.split('/');
+          if (dateParts.length === 3) {
+            const day = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]) - 1; // Mês em JS é 0-indexed
+            const year = parseInt(dateParts[2]);
+            deadline = new Date(year, month, day);
+
+            if (isNaN(deadline.getTime()) || deadline < new Date()) {
+              await bot.sendMessage(
+                chatId,
+                'A data informada é inválida ou está no passado. Por favor, informe uma data futura no formato DD/MM/AAAA ou digite "sem prazo".'
+              );
+              return true;
+            }
+          } else {
+            await bot.sendMessage(
+              chatId,
+              'Por favor, informe a data no formato DD/MM/AAAA ou digite "sem prazo".'
+            );
+            return true;
+          }
+        }
+
+        // Salva o prazo e pergunta sobre o valor inicial
+        userState.goalData.deadline = deadline;
+        userState.state = 'awaiting_goal_initial';
+        userStates.set(telegramId, userState);
+
+        await bot.sendMessage(
+          chatId,
+          'Quase lá! Você já tem algum valor guardado para essa meta? Se sim, informe o valor. Se não, digite 0.'
+        );
+        return true;
+      }
+
+      case 'awaiting_goal_initial': {
+        // Tenta converter o valor inicial para número
+        const initialAmount = parseFloat(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+
+        if (isNaN(initialAmount) || initialAmount < 0) {
+          await bot.sendMessage(
+            chatId,
+            'Por favor, informe um valor válido maior ou igual a zero. (ex: 1000 ou 0)'
+          );
+          return true;
+        }
+
+        // Verifica se o valor inicial não é maior que o valor alvo
+        if (initialAmount > userState.goalData.target_amount) {
+          await bot.sendMessage(
+            chatId,
+            'O valor inicial não pode ser maior que o valor da meta. Por favor, informe um valor menor.'
+          );
+          return true;
+        }
+
+        // Salva o valor inicial e pergunta sobre notas adicionais
+        userState.goalData.current_amount = initialAmount;
+        userState.state = 'awaiting_goal_notes';
+        userStates.set(telegramId, userState);
+
+        await bot.sendMessage(
+          chatId,
+          'Por último, gostaria de adicionar alguma nota ou descrição para essa meta? Se não, digite "não".'
+        );
+        return true;
+      }
+
+      case 'awaiting_goal_notes': {
+        // Salva as notas (ou null se for "não")
+        const notes = (text.toLowerCase() === 'não' || text.toLowerCase() === 'nao') ? null : text;
+
+        // Cria a meta no banco de dados
+        const goalData = {
+          name: userState.goalData.name,
+          target_amount: userState.goalData.target_amount,
+          current_amount: userState.goalData.current_amount || 0,
+          deadline: userState.goalData.deadline,
+          notes: notes,
+          completed: false
+        };
+
+        const newGoal = await goalService.createGoal(userState.userId, goalData);
+
+        // Obtém a configuração do usuário para personalidade
+        const userConfig = await userConfigService.getUserConfig(userState.userId);
+
+        // Limpa o estado do usuário
+        userStates.delete(telegramId);
+
+        // Confirmação de acordo com a personalidade
+        let confirmationMessage;
+        if (userConfig.personality === userConfigService.PERSONALITIES.FRIENDLY) {
+          confirmationMessage = `✅ Ótimo! Sua meta "${newGoal.name}" foi criada com sucesso!\n\nContinue economizando e acompanhando seu progresso. Use o comando /metas para ver todas as suas metas ou /metadetalhes para ver detalhes específicos.`;
+        } else if (userConfig.personality === userConfigService.PERSONALITIES.SASSY) {
+          confirmationMessage = `✅ Meta "${newGoal.name}" criada! Agora vamos ver se você tem disciplina pra chegar lá ou se vai desistir no primeiro chocolate que ver! 😜\n\nUse /metas pra ver suas (provavelmente irrealistas) metas financeiras.`;
+        } else {
+          confirmationMessage = `✅ Meta financeira "${newGoal.name}" registrada com sucesso.\n\nValor alvo: ${formatCurrency(newGoal.target_amount)}\nPrazo: ${newGoal.deadline ? moment(newGoal.deadline).format('DD/MM/YYYY') : 'Indefinido'}\n\nUtilize /metas para visualizar todas as suas metas.`;
+        }
+
+        await bot.sendMessage(chatId, confirmationMessage);
+        return true;
+      }
+
+      default:
+        return false;
+    }
+  } catch (error) {
+    console.error('Error in handleGoalCreationSteps:', error);
+    await bot.sendMessage(chatId, '❌ Ocorreu um erro ao processar sua solicitação.');
+    userStates.delete(telegramId);
+    return true;
+  }
+}
+
+/**
+ * Manipula callbacks relacionados às metas
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} callbackQuery - Objeto da query de callback
+ */
+async function handleGoalCallbacks(bot, callbackQuery) {
+  try {
+    const callbackData = callbackQuery.data;
+    const chatId = callbackQuery.message.chat.id;
+    const { id: telegramId } = callbackQuery.from;
+
+    // Obtém o usuário
+    const user = await supabaseService.getOrCreateUser(
+      telegramId,
+      callbackQuery.from.first_name,
+      callbackQuery.from.last_name,
+      callbackQuery.from.username
+    );
+
+    // Formato esperado: goal_action:goalId
+    const [action, goalId] = callbackData.split(':');
+
+    if (!goalId) {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: 'Erro: ID da meta não encontrado.',
+        show_alert: true
+      });
+      return;
+    }
+
+    // Verifica se a meta existe e pertence ao usuário
+    const goal = await goalService.getGoalById(goalId, user.id);
+
+    if (!goal) {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: 'Erro: Meta não encontrada ou não pertence a você.',
+        show_alert: true
+      });
+      return;
+    }
+
+    switch (action) {
+      case 'goal_add':
+        // Adiciona valor à meta
+        await bot.answerCallbackQuery(callbackQuery.id);
+
+        // Configura o estado para adicionar valor
+        userStates.set(telegramId, {
+          state: 'awaiting_goal_add_amount',
+          userId: user.id,
+          goalId: goalId
+        });
+
+        await bot.sendMessage(
+          chatId,
+          `Qual valor você gostaria de adicionar à meta "${goal.name}"?`
+        );
+        break;
+
+      case 'goal_toggle': {
+        // Alterna o status da meta (completa/incompleta)
+        const newStatus = !goal.completed;
+        await goalService.updateGoal(goalId, user.id, { completed: newStatus });
+
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: newStatus ? 'Meta marcada como concluída! 🎉' : 'Meta reaberta!'
+        });
+
+        // Atualiza a mensagem
+        await handleGoalDetails(bot, { 
+          from: callbackQuery.from, 
+          chat: { id: chatId }, 
+          text: `/metadetalhes ${goalId}`
+        });
+        break;
+      }
+
+      case 'goal_edit':
+        // Inicia o processo de edição da meta
+        await bot.answerCallbackQuery(callbackQuery.id);
+
+        const editKeyboard = {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: 'Nome', callback_data: `goal_edit_name:${goalId}` },
+                { text: 'Valor Alvo', callback_data: `goal_edit_target:${goalId}` }
+              ],
+              [
+                { text: 'Prazo', callback_data: `goal_edit_deadline:${goalId}` },
+                { text: 'Notas', callback_data: `goal_edit_notes:${goalId}` }
+              ],
+              [
+                { text: 'Cancelar', callback_data: `goal_cancel_edit:${goalId}` }
+              ]
+            ]
+          }
+        };
+
+        await bot.sendMessage(
+          chatId,
+          `O que você gostaria de editar na meta "${goal.name}"?`,
+          editKeyboard
+        );
+        break;
+
+      case 'goal_delete':
+        // Confirma a exclusão da meta
+        await bot.answerCallbackQuery(callbackQuery.id);
+
+        const confirmKeyboard = {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: 'Sim, excluir meta', callback_data: `goal_confirm_delete:${goalId}` },
+                { text: 'Não, cancelar', callback_data: `goal_cancel_delete:${goalId}` }
+              ]
+            ]
+          }
+        };
+
+        await bot.sendMessage(
+          chatId,
+          `Tem certeza que deseja excluir a meta "${goal.name}"? Esta ação não pode ser desfeita.`,
+          confirmKeyboard
+        );
+        break;
+
+      case 'goal_confirm_delete':
+        // Exclui a meta
+        await goalService.deleteGoal(goalId, user.id);
+
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Meta excluída com sucesso!'
+        });
+
+        await bot.sendMessage(
+          chatId,
+          `A meta "${goal.name}" foi excluída.`
+        );
+        break;
+
+      case 'goal_cancel_delete':
+        // Cancela a exclusão
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Exclusão cancelada.'
+        });
+        break;
+
+      case 'goal_edit_name':
+      case 'goal_edit_target':
+      case 'goal_edit_deadline':
+      case 'goal_edit_notes': {
+        await bot.answerCallbackQuery(callbackQuery.id);
+
+        const field = action.split('_')[2];
+        let promptMessage;
+
+        switch (field) {
+          case 'name':
+            promptMessage = 'Digite o novo nome para a meta:';
+            break;
+          case 'target':
+            promptMessage = 'Digite o novo valor alvo para a meta:';
+            break;
+          case 'deadline':
+            promptMessage = 'Digite a nova data limite no formato DD/MM/AAAA ou "sem prazo" para remover:';
+            break;
+          case 'notes':
+            promptMessage = 'Digite as novas notas para a meta ou "remover" para limpar:';
+            break;
+        }
+
+        userStates.set(telegramId, {
+          state: `awaiting_goal_edit_${field}`,
+          userId: user.id,
+          goalId: goalId
+        });
+
+        await bot.sendMessage(chatId, promptMessage);
+        break;
+      }
+
+      case 'goal_cancel_edit':
+        // Cancela a edição
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Edição cancelada.'
+        });
+        break;
+
+      default:
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Ação não reconhecida.'
+        });
+        break;
+    }
+  } catch (error) {
+    console.error('Error in handleGoalCallbacks:', error);
+    await bot.answerCallbackQuery(callbackQuery.id, {
+      text: 'Ocorreu um erro ao processar sua solicitação.',
+      show_alert: true
+    });
+  }
+}
+
+/**
+ * Manipula as entradas do usuário para edição de metas
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ */
+async function handleGoalEditingSteps(bot, msg) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  const text = msg.text;
+
+  // Verifica o estado atual do usuário
+  const userState = userStates.get(telegramId);
+  if (!userState || !userState.state.startsWith('awaiting_goal_edit_')) return false;
+
+  try {
+    // Obtém o campo que está sendo editado
+    const field = userState.state.replace('awaiting_goal_edit_', '');
+
+    // Obtém a meta atual
+    const goal = await goalService.getGoalById(userState.goalId, userState.userId);
+
+    if (!goal) {
+      await bot.sendMessage(chatId, 'Erro: Meta não encontrada.');
+      userStates.delete(telegramId);
+      return true;
+    }
+
+    let updateData = {};
+    let validInput = true;
+    let responseMessage = '';
+
+    // Processa a entrada de acordo com o campo
+    switch (field) {
+      case 'name':
+        if (text.trim().length === 0) {
+          await bot.sendMessage(chatId, 'O nome da meta não pode estar vazio. Por favor, digite um nome válido:');
+          validInput = false;
+        } else {
+          updateData.name = text.trim();
+          responseMessage = `Nome da meta atualizado para "${text.trim()}".`;
+        }
+        break;
+
+      case 'target': {
+        const amount = parseFloat(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+
+        if (isNaN(amount) || amount <= 0) {
+          await bot.sendMessage(chatId, 'Por favor, informe um valor válido maior que zero:');
+          validInput = false;
+        } else if (amount < goal.current_amount) {
+          await bot.sendMessage(chatId, 'O valor alvo não pode ser menor que o valor atual acumulado. Por favor, informe um valor maior:');
+          validInput = false;
+        } else {
+          updateData.target_amount = amount;
+          responseMessage = `Valor alvo da meta atualizado para ${formatCurrency(amount)}.`;
+        }
+        break;
+      }
+
+      case 'deadline': {
+        if (text.toLowerCase() === 'sem prazo') {
+          updateData.deadline = null;
+          responseMessage = 'Prazo removido. A meta agora não tem data limite.';
+        } else {
+          const dateParts = text.split('/');
+          if (dateParts.length === 3) {
+            const day = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]) - 1;
+            const year = parseInt(dateParts[2]);
+            const deadline = new Date(year, month, day);
+
+            if (isNaN(deadline.getTime()) || deadline < new Date()) {
+              await bot.sendMessage(chatId, 'A data informada é inválida ou está no passado. Por favor, informe uma data futura no formato DD/MM/AAAA ou digite "sem prazo":');
+              validInput = false;
+            } else {
+              updateData.deadline = deadline;
+              responseMessage = `Prazo da meta atualizado para ${moment(deadline).format('DD/MM/YYYY')}.`;
+            }
+          } else {
+            await bot.sendMessage(chatId, 'Por favor, informe a data no formato DD/MM/AAAA ou digite "sem prazo":');
+            validInput = false;
+          }
+        }
+        break;
+      }
+
+      case 'notes': {
+        if (text.toLowerCase() === 'remover') {
+          updateData.notes = null;
+          responseMessage = 'Notas removidas da meta.';
+        } else {
+          updateData.notes = text;
+          responseMessage = 'Notas da meta atualizadas.';
+        }
+        break;
+      }
+
+      case 'add_amount': {
+        const addAmount = parseFloat(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+
+        if (isNaN(addAmount) || addAmount <= 0) {
+          await bot.sendMessage(chatId, 'Por favor, informe um valor válido maior que zero:');
+          validInput = false;
+        } else {
+          const newAmount = goal.current_amount + addAmount;
+          if (newAmount > goal.target_amount) {
+            updateData.current_amount = newAmount;
+            updateData.completed = true;
+            responseMessage = `🎉 Valor de ${formatCurrency(addAmount)} adicionado! Você atingiu (e ultrapassou) sua meta! Saldo atual: ${formatCurrency(newAmount)}`;
+          } else {
+            updateData.current_amount = newAmount;
+            if (newAmount === goal.target_amount) {
+              updateData.completed = true;
+              responseMessage = `🎉 Valor de ${formatCurrency(addAmount)} adicionado! Parabéns, você acabou de atingir sua meta! Saldo atual: ${formatCurrency(newAmount)}`;
+            } else {
+              const remainingAmount = goal.target_amount - newAmount;
+              const progress = (newAmount / goal.target_amount * 100).toFixed(1);
+              responseMessage = `✅ Valor de ${formatCurrency(addAmount)} adicionado! Faltam ${formatCurrency(remainingAmount)} para atingir sua meta (${progress}%).`;
+            }
+          }
+        }
+        break;
+      }
+
+      default:
+        await bot.sendMessage(chatId, 'Ação de edição inválida.');
+        validInput = false;
+        break;
+    }
+
+    if (validInput) {
+      await goalService.updateGoal(userState.goalId, userState.userId, updateData);
+      await bot.sendMessage(chatId, responseMessage);
+    }
+
+    userStates.delete(telegramId);
+    return true;
+  } catch (error) {
+    console.error('Error in handleGoalEditingSteps:', error);
+    await bot.sendMessage(chatId, '❌ Ocorreu um erro ao processar sua solicitação.');
+    userStates.delete(telegramId);
+    return true;
+  }
+}
+
 module.exports = {
   commands,
   handleStart,
@@ -1159,5 +1892,9 @@ module.exports = {
   handleIncomeChart,
   handleBalanceEvolutionChart,
   handleComparisonChart,
-  handleDashboardCallbacks
-}
+  handleDashboardCallbacks,
+  handleCreateGoal,
+  handleListGoals,
+  handleGoalDetails,
+  handleGoalCallbacks
+};

@@ -55,7 +55,10 @@ async function initApp() {
     bot.onText(/\/mes/, (msg) => handlers.handleReport(bot, msg, 'month'))
     bot.onText(/\/reset/, (msg) => handlers.handleReset(bot, msg))
     bot.onText(/\/lembretes/, (msg) => handlers.handleListReminders(bot, msg))
-    
+    bot.onText(/\/meta/, (msg) => handlers.handleCreateGoal(bot, msg))
+    bot.onText(/\/metas/, (msg) => handlers.handleListGoals(bot, msg))
+    bot.onText(/\/metadetalhes(.*)/, (msg) => handlers.handleGoalDetails(bot, msg))
+
 
     bot.onText(/\/dashboard/, (msg) => handlers.handleDashboard(bot, msg, 'month'))
     bot.onText(/\/grafico_despesas/, (msg) => handlers.handleExpenseChart(bot, msg, 'month'))
