@@ -32,10 +32,8 @@ async function initApp() {
     
 
     bot.on('polling_error', (error) => {
-
       console.error('Erro de polling:', error.message || error)
       
-
       if (error.code === 'ETELEGRAM' && error.message && error.message.includes('409')) {
         console.log('Aviso: Múltiplas instâncias detectadas. Certifique-se de rodar apenas uma instância do bot.')
       }
@@ -65,10 +63,24 @@ async function initApp() {
     bot.onText(/\/grafico_comparativo/, (msg) => handlers.handleComparisonChart(bot, msg, 'month'))
     bot.onText(/\/visualizar/, (msg) => handlers.handleDashboardMenu(bot, msg))
     
-    bot.on('message', (msg) => {
-
+    bot.on('message', async (msg) => {
+      // Ignora mensagens que são comandos
       if (msg.text && msg.text.startsWith('/')) return
       
+      const { id: telegramId } = msg.from;
+      
+      // Verifica se o usuário está no fluxo de criação de meta
+      const userState = handlers.getUserState(telegramId);
+      
+      if (userState && userState.state && userState.state.startsWith('awaiting_goal_')) {
+        // Se estiver no fluxo de criação de meta, processa pelo handler de metas
+        console.log(`Usuário ${telegramId} está no fluxo de criação de meta: ${userState.state}`);
+        // Tenta processar com handlers de criação de meta primeiro
+        const handled = await goalHandlers.handleGoalMessage(bot, msg, { isGoal: true });
+        if (handled) return; // Se foi processado com sucesso, não continua
+      }
+      
+      // Caso não seja parte do fluxo de metas ou não tenha sido processado, trata como mensagem normal
       handlers.handleMessage(bot, msg)
     })
     
@@ -77,7 +89,6 @@ async function initApp() {
         const callbackData = callbackQuery.data
         
         if (callbackData.startsWith('complete_reminder:')) {
-         
           await reminderScheduler.handleReminderCompletion(bot, callbackQuery)
         }
         else if (
@@ -87,7 +98,6 @@ async function initApp() {
           callbackData.startsWith('balance_chart_') ||
           callbackData.startsWith('comparison_chart_')
         ) {
-
           await handlers.handleDashboardCallbacks(bot, callbackQuery)
         }
         else if (callbackData.startsWith('goal_')) {

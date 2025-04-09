@@ -1881,6 +1881,17 @@ async function handleGoalEditingSteps(bot, msg) {
   }
 }
 
+
+
+/**
+ * Obtém o estado atual do usuário
+ * @param {string|number} telegramId - ID do usuário no Telegram
+ * @returns {Object|null} Estado atual do usuário
+ */
+function getUserState(telegramId) {
+  return userStates.get(telegramId) || null;
+}
+
 module.exports = {
   commands,
   handleStart,
@@ -1901,5 +1912,6 @@ module.exports = {
   handleCreateGoal,
   handleListGoals,
   handleGoalDetails,
-  handleGoalCallbacks
+  handleGoalCallbacks,
+  getUserState  // Adicionando o novo método
 };

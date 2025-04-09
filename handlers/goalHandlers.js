@@ -7,7 +7,8 @@ const goalService = require('../services/goalService');
 const personalityService = require('../services/personalityResponses');
 const userConfigService = require('../services/userConfig');
 const supabaseService = require('../services/supabase');
-const moment = require('moment');
+const handlers = require('./telegramHandlers'); 
+const moment = require('moment'); 
 const numeral = require('numeral');
 
 // Armazenar estado das conversas sobre metas
@@ -633,49 +634,197 @@ async function createGoalReminder(bot, msg, goalId, frequency, user, userConfig)
  * @param {TelegramBot} bot - Instância do bot do Telegram
  * @param {Object} msg - Objeto da mensagem do Telegram
  * @param {Object} analysis - Análise da mensagem feita pelo LLM
+ * @returns {Promise<boolean>} - Retorna true se a mensagem foi processada como parte do fluxo de meta
  */
 async function handleGoalMessage(bot, msg, analysis) {
-  const { id: telegramId, first_name } = msg.from;
-  const chatId = msg.chat.id;
-  
-  try {
-    // Obter usuário e configurações
-    const user = await supabaseService.getOrCreateUser(telegramId, first_name, msg.from.last_name, msg.from.username);
-    const userConfig = await userConfigService.getUserConfig(user.id);
+    const { id: telegramId, first_name } = msg.from;
+    const chatId = msg.chat.id;
     
-    // Verificar tipo de ação relacionada à meta
-    if (analysis.isGoal) {
-      // Identificar a ação desejada
-      switch (analysis.goalAction) {
-        case 'create':
-          return handleGoalCreation(bot, msg, analysis, user, userConfig);
+    try {
+      // Obter usuário e configurações
+      const user = await supabaseService.getOrCreateUser(telegramId, first_name, msg.from.last_name, msg.from.username);
+      const userConfig = await userConfigService.getUserConfig(user.id);
+      
+      // Verificar se o usuário está em algum estado do fluxo de criação de meta
+      const userState = handlers.getUserState(telegramId);
+      
+      if (userState && userState.state && userState.state.startsWith('awaiting_goal_')) {
+        console.log(`Processando mensagem de meta para usuário ${telegramId} em estado ${userState.state}`);
         
-        case 'contribute':
-          return handleGoalContribution(bot, msg, analysis, user, userConfig);
-        
-        case 'query':
-          return handleGoalQuery(bot, msg, analysis, user, userConfig);
-        
-        default:
-          return bot.sendMessage(
-            chatId,
-            "Não entendi o que você gostaria de fazer com sua meta. Você pode criar uma meta, adicionar valores, ou consultar seu progresso.",
-            { parse_mode: 'Markdown' }
-          );
+        // Verificar em qual etapa do fluxo de criação de meta o usuário está
+        switch (userState.state) {
+          case 'awaiting_goal_name':
+            // Salvando o nome da meta
+            userState.goalData = userState.goalData || {};
+            userState.goalData.title = msg.text.trim();
+            userState.state = 'awaiting_goal_amount';
+            
+            await bot.sendMessage(
+              chatId,
+              "Ótimo! Agora, me diga qual é o valor total da meta?",
+              { parse_mode: 'Markdown' }
+            );
+            return true;
+            
+          case 'awaiting_goal_amount':
+            // Processando o valor da meta
+            try {
+              const amount = parseFloat(msg.text.replace(/[R$\s]/g, '').replace(',', '.'));
+              
+              if (isNaN(amount) || amount <= 0) {
+                await bot.sendMessage(
+                  chatId,
+                  "Por favor, informe um valor numérico válido maior que zero.",
+                  { parse_mode: 'Markdown' }
+                );
+                return true;
+              }
+              
+              userState.goalData.targetAmount = amount;
+              userState.state = 'awaiting_goal_initial_amount';
+              
+              const prompt = personalityService.getResponse(
+                userConfig.personality,
+                'goalInitialAmountPrompt'
+              );
+              
+              await bot.sendMessage(chatId, prompt, { parse_mode: 'Markdown' });
+              return true;
+            } catch (error) {
+              console.error('Erro ao processar valor da meta:', error);
+              await bot.sendMessage(
+                chatId,
+                "Ocorreu um erro ao processar o valor. Por favor, informe um valor numérico válido.",
+                { parse_mode: 'Markdown' }
+              );
+              return true;
+            }
+            
+          case 'awaiting_goal_initial_amount':
+            // Processando o valor inicial
+            try {
+              let initialAmount = 0;
+              
+              if (!/^(não|nao|n|no|0)$/i.test(msg.text)) {
+                initialAmount = parseFloat(msg.text.replace(/[R$\s]/g, '').replace(',', '.'));
+                if (isNaN(initialAmount)) initialAmount = 0;
+              }
+              
+              userState.goalData.initialAmount = initialAmount;
+              userState.state = 'awaiting_goal_target_date';
+              
+              const prompt = personalityService.getResponse(
+                userConfig.personality,
+                'goalTargetDatePrompt'
+              );
+              
+              await bot.sendMessage(chatId, prompt, { parse_mode: 'Markdown' });
+              return true;
+            } catch (error) {
+              console.error('Erro ao processar valor inicial:', error);
+              userState.goalData.initialAmount = 0;
+              userState.state = 'awaiting_goal_target_date';
+              
+              const prompt = personalityService.getResponse(
+                userConfig.personality,
+                'goalTargetDatePrompt'
+              );
+              
+              await bot.sendMessage(chatId, prompt, { parse_mode: 'Markdown' });
+              return true;
+            }
+            
+          case 'awaiting_goal_target_date':
+            // Processando a data alvo
+            try {
+              let targetDate = null;
+              
+              if (!/^(não|nao|n|no|sem prazo|sem data|indefinido)$/i.test(msg.text)) {
+                // Tentar extrair data
+                if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(msg.text)) {
+                  // Formato DD/MM/YYYY
+                  targetDate = moment(msg.text, 'DD/MM/YYYY').toDate();
+                } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(msg.text)) {
+                  // Formato YYYY-MM-DD
+                  targetDate = moment(msg.text, 'YYYY-MM-DD').toDate();
+                } else {
+                  // Outros formatos
+                  targetDate = new Date(msg.text);
+                }
+                
+                // Verificar data válida
+                if (isNaN(targetDate.getTime())) {
+                  targetDate = null;
+                }
+              }
+              
+              userState.goalData.targetDate = targetDate;
+              userState.state = 'confirmation';
+              
+              // Criar a meta
+              await handleGoalConfirmation(bot, msg, user, userConfig);
+              return true;
+            } catch (error) {
+              console.error('Erro ao processar data alvo:', error);
+              userState.goalData.targetDate = null;
+              userState.state = 'confirmation';
+              
+              await handleGoalConfirmation(bot, msg, user, userConfig);
+              return true;
+            }
+            
+          case 'confirmation':
+            // Se já está na confirmação, finaliza o processo
+            await handleGoalConfirmation(bot, msg, user, userConfig);
+            return true;
+            
+          default:
+            console.log(`Estado desconhecido: ${userState.state}`);
+            return false;
+        }
       }
-    } 
-    else if (analysis.isGoalInfo) {
-      return handleGoalInfo(bot, msg, analysis, user, userConfig);
+      
+      // Se chegou aqui, verifica se a mensagem é uma solicitação relacionada a metas
+      if (analysis.isGoal) {
+        // Identificar a ação desejada
+        switch (analysis.goalAction) {
+          case 'create':
+            await handleGoalCreation(bot, msg, analysis, user, userConfig);
+            return true;
+          
+          case 'contribute':
+            await handleGoalContribution(bot, msg, analysis, user, userConfig);
+            return true;
+          
+          case 'query':
+            await handleGoalQuery(bot, msg, analysis, user, userConfig);
+            return true;
+          
+          default:
+            await bot.sendMessage(
+              chatId,
+              "Não entendi o que você gostaria de fazer com sua meta. Você pode criar uma meta, adicionar valores, ou consultar seu progresso.",
+              { parse_mode: 'Markdown' }
+            );
+            return true;
+        }
+      } 
+      else if (analysis.isGoalInfo) {
+        await handleGoalInfo(bot, msg, analysis, user, userConfig);
+        return true;
+      }
+      
+      return false; // Indica que a mensagem não foi processada como meta
+    } catch (error) {
+      console.error('Error in handleGoalMessage:', error);
+      await bot.sendMessage(
+        chatId,
+        "Desculpe, ocorreu um erro ao processar sua solicitação relacionada a metas. Por favor, tente novamente.",
+        { parse_mode: 'Markdown' }
+      );
+      return true; // Consideramos como processada para evitar processamento duplicado
     }
-  } catch (error) {
-    console.error('Error in handleGoalMessage:', error);
-    return bot.sendMessage(
-      chatId,
-      "Desculpe, ocorreu um erro ao processar sua solicitação relacionada a metas. Por favor, tente novamente.",
-      { parse_mode: 'Markdown' }
-    );
   }
-}
 
 // Exportar funções
 module.exports = {
