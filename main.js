@@ -30,6 +30,8 @@ async function initApp() {
     console.log('Tabela de configurações inicializada com sucesso!')
     const bot = new TelegramBot(TELEGRAM_TOKEN, botOptions)
     
+    // Compartilhar a instância do bot com o módulo goalHandlers
+    goalHandlers.setBotInstance(bot);
 
     bot.on('polling_error', (error) => {
       console.error('Erro de polling:', error.message || error)
@@ -39,10 +41,8 @@ async function initApp() {
       }
     })
     
-
     bot.setMyCommands(handlers.commands)
     
-
     bot.onText(/\/start/, (msg) => handlers.handleStart(bot, msg))
     bot.onText(/\/ajuda/, (msg) => handlers.handleHelp(bot, msg))
     bot.onText(/\/configurar/, (msg) => handlers.handleConfigure(bot, msg))
@@ -63,26 +63,20 @@ async function initApp() {
     bot.onText(/\/grafico_comparativo/, (msg) => handlers.handleComparisonChart(bot, msg, 'month'))
     bot.onText(/\/visualizar/, (msg) => handlers.handleDashboardMenu(bot, msg))
     
-    bot.on('message', async (msg) => {
+    // Adicionamos um flag nas mensagens processadas pelo fluxo de metas
+    bot.on('message', (msg) => {
       // Ignora mensagens que são comandos
-      if (msg.text && msg.text.startsWith('/')) return
+      if (msg.text && msg.text.startsWith('/')) return;
       
-      const { id: telegramId } = msg.from;
-      
-      // Verifica se o usuário está no fluxo de criação de meta
-      const userState = handlers.getUserState(telegramId);
-      
-      if (userState && userState.state && userState.state.startsWith('awaiting_goal_')) {
-        // Se estiver no fluxo de criação de meta, processa pelo handler de metas
-        console.log(`Usuário ${telegramId} está no fluxo de criação de meta: ${userState.state}`);
-        // Tenta processar com handlers de criação de meta primeiro
-        const handled = await goalHandlers.handleGoalMessage(bot, msg, { isGoal: true });
-        if (handled) return; // Se foi processado com sucesso, não continua
+      // Verifica se esta mensagem está sendo processada pelo fluxo de metas
+      if (msg._processedByGoalFlow) {
+        console.log('Mensagem já processada pelo fluxo de metas, ignorando processamento padrão');
+        return;
       }
       
-      // Caso não seja parte do fluxo de metas ou não tenha sido processado, trata como mensagem normal
-      handlers.handleMessage(bot, msg)
-    })
+      // Processa como mensagem normal
+      handlers.handleMessage(bot, msg);
+    });
     
     bot.on('callback_query', async (callbackQuery) => {
       try {

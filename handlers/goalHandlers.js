@@ -1,7 +1,3 @@
-/**
- * handlers/goalHandlers.js
- * Manipuladores para comandos e mensagens relacionadas a metas financeiras
- */
 
 const goalService = require('../services/goalService');
 const personalityService = require('../services/personalityResponses');
@@ -13,6 +9,31 @@ const numeral = require('numeral');
 
 // Armazenar estado das conversas sobre metas
 const goalConversations = new Map();
+
+let botInstance = null;
+
+/**
+ * Define a instância do bot para uso em handlers isolados
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ */
+function setBotInstance(bot) {
+  botInstance = bot;
+  console.log('Instância do bot configurada no módulo goalHandlers');
+}
+
+/**
+ * Modifica a mensagem para indicar que foi processada pelo fluxo de metas
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ * @returns {Object} - Mensagem modificada
+ */
+function markMessageAsProcessed(msg) {
+  // Cria uma cópia da mensagem para evitar modificar o objeto original
+  const processedMsg = {...msg};
+  // Adiciona flag para evitar processamento duplicado
+  processedMsg._processedByGoalFlow = true;
+  return processedMsg;
+}
+
 
 /**
  * Gerencia o fluxo de criação de metas
@@ -449,44 +470,226 @@ async function handleGoalsCommand(bot, msg) {
   }
 }
 
+
+
+
 /**
  * Manipula o comando /novameta
  * @param {TelegramBot} bot - Instância do bot do Telegram
  * @param {Object} msg - Objeto da mensagem do Telegram
  */
 async function handleNewGoalCommand(bot, msg) {
-  const { id: telegramId, first_name } = msg.from;
-  const chatId = msg.chat.id;
-  
-  try {
-    // Obter usuário e configurações
-    const user = await supabaseService.getOrCreateUser(telegramId, first_name, msg.from.last_name, msg.from.username);
-    const userConfig = await userConfigService.getUserConfig(user.id);
+    const { id: telegramId, first_name } = msg.from;
+    const chatId = msg.chat.id;
     
-    // Iniciar fluxo de criação de meta
-    goalConversations.set(telegramId, {
-      state: 'awaiting_title',
-      title: null,
-      targetAmount: null,
-      initialAmount: 0,
-      targetDate: null,
-      category: null
-    });
-    
-    return bot.sendMessage(
-      chatId,
-      "Vamos criar uma nova meta financeira! Por favor, dê um nome para a sua meta. Por exemplo: 'Celular novo', 'Viagem para a praia', etc.",
-      { parse_mode: 'Markdown' }
-    );
-  } catch (error) {
-    console.error('Error in handleNewGoalCommand:', error);
-    return bot.sendMessage(
-      chatId,
-      "Desculpe, ocorreu um erro ao iniciar a criação da meta. Por favor, tente novamente.",
-      { parse_mode: 'Markdown' }
-    );
+    try {
+      console.log(`Iniciando fluxo de criação de meta para usuário ${telegramId}`);
+      
+      // Obter usuário e configurações
+      const user = await supabaseService.getOrCreateUser(telegramId, first_name, msg.from.last_name, msg.from.username);
+      const userConfig = await userConfigService.getUserConfig(user.id);
+      
+      // Criar um event listener específico para este usuário
+      const goalCreationHandler = async (responseMsg) => {
+        // Ignora mensagens de outros usuários ou chats
+        if (responseMsg.from.id !== telegramId || responseMsg.chat.id !== chatId) return;
+        // Ignora comandos
+        if (responseMsg.text && responseMsg.text.startsWith('/')) return;
+        
+        const currentState = goalConversations.get(telegramId);
+        if (!currentState) return;
+        
+        console.log(`Processando resposta para estado: ${currentState.state}`);
+        
+        switch (currentState.state) {
+          case 'awaiting_title':
+            // Salvar o título e perguntar o valor alvo
+            currentState.title = responseMsg.text.trim();
+            currentState.state = 'awaiting_target_amount';
+            
+            const targetPrompt = personalityService.getResponse(
+              userConfig.personality,
+              'goalCreatePrompt'
+            );
+            
+            bot.sendMessage(chatId, targetPrompt, { parse_mode: 'Markdown' });
+            break;
+            
+          case 'awaiting_target_amount':
+            // Processar valor alvo
+            try {
+              const numericValue = responseMsg.text.replace(/[R$\s]/g, '').replace(',', '.');
+              const targetAmount = parseFloat(numericValue);
+              
+              if (isNaN(targetAmount) || targetAmount <= 0) {
+                bot.sendMessage(
+                  chatId,
+                  "Por favor, informe um valor numérico válido. Por exemplo: '1500', '2000,50', etc.",
+                  { parse_mode: 'Markdown' }
+                );
+                return;
+              }
+              
+              // Atualizar conversa
+              currentState.targetAmount = targetAmount;
+              currentState.state = 'awaiting_initial_amount';
+              
+              const initialPrompt = personalityService.getResponse(
+                userConfig.personality,
+                'goalInitialAmountPrompt'
+              );
+              
+              bot.sendMessage(chatId, initialPrompt, { parse_mode: 'Markdown' });
+            } catch (error) {
+              console.error('Erro ao processar valor alvo:', error);
+              bot.sendMessage(
+                chatId,
+                "Ocorreu um erro ao processar o valor. Por favor, tente novamente com um número válido.",
+                { parse_mode: 'Markdown' }
+              );
+            }
+            break;
+            
+          case 'awaiting_initial_amount':
+            // Processar valor inicial
+            try {
+              let initialAmount = 0;
+              
+              if (!/^(não|nao|n|no|0)$/i.test(responseMsg.text)) {
+                const numericValue = responseMsg.text.replace(/[R$\s]/g, '').replace(',', '.');
+                initialAmount = parseFloat(numericValue);
+                if (isNaN(initialAmount)) initialAmount = 0;
+              }
+              
+              // Atualizar conversa
+              currentState.initialAmount = initialAmount;
+              currentState.state = 'awaiting_target_date';
+              
+              const datePrompt = personalityService.getResponse(
+                userConfig.personality,
+                'goalTargetDatePrompt'
+              );
+              
+              bot.sendMessage(chatId, datePrompt, { parse_mode: 'Markdown' });
+            } catch (error) {
+              console.error('Erro ao processar valor inicial:', error);
+              currentState.initialAmount = 0;
+              currentState.state = 'awaiting_target_date';
+              
+              const datePrompt = personalityService.getResponse(
+                userConfig.personality,
+                'goalTargetDatePrompt'
+              );
+              
+              bot.sendMessage(chatId, datePrompt, { parse_mode: 'Markdown' });
+            }
+            break;
+            
+          case 'awaiting_target_date':
+            // Processar data alvo
+            try {
+              let targetDate = null;
+              
+              if (!/^(não|nao|n|no|sem prazo|sem data|indefinido)$/i.test(responseMsg.text)) {
+                // Tentar extrair data
+                if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(responseMsg.text)) {
+                  // Formato DD/MM/YYYY
+                  targetDate = moment(responseMsg.text, 'DD/MM/YYYY').toDate();
+                } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(responseMsg.text)) {
+                  // Formato YYYY-MM-DD
+                  targetDate = moment(responseMsg.text, 'YYYY-MM-DD').toDate();
+                } else {
+                  // Outros formatos
+                  targetDate = new Date(responseMsg.text);
+                }
+                
+                // Verificar data válida
+                if (isNaN(targetDate.getTime())) {
+                  targetDate = null;
+                }
+              }
+              
+              // Atualizar conversa
+              currentState.targetDate = targetDate;
+              currentState.state = 'confirmation';
+              
+              // Remover o listener após o último passo
+              bot.removeListener('message', goalCreationHandler);
+              
+              // Criar a meta
+              const goal = await goalService.createGoal(
+                user.id,
+                currentState.title,
+                currentState.targetAmount,
+                currentState.initialAmount || 0,
+                currentState.targetDate,
+                null // categoryId opcional
+              );
+              
+              // Enviar mensagem de sucesso
+              const successMessage = personalityService.getResponse(
+                userConfig.personality,
+                'goalCreationSuccess',
+                goal
+              );
+              
+              bot.sendMessage(chatId, successMessage, { parse_mode: 'Markdown' });
+              
+              // Limpar a conversa
+              goalConversations.delete(telegramId);
+            } catch (error) {
+              console.error('Erro ao finalizar criação de meta:', error);
+              bot.sendMessage(
+                chatId,
+                "Desculpe, ocorreu um erro ao criar sua meta. Por favor, tente novamente.",
+                { parse_mode: 'Markdown' }
+              );
+              
+              // Limpar a conversa em caso de erro
+              goalConversations.delete(telegramId);
+              
+              // Remover o listener em caso de erro
+              bot.removeListener('message', goalCreationHandler);
+            }
+            break;
+            
+          default:
+            console.log(`Estado desconhecido: ${currentState.state}`);
+            // Remover o listener para estados desconhecidos
+            bot.removeListener('message', goalCreationHandler);
+            break;
+        }
+      };
+      
+      // Adicionar o event listener para processar respostas
+      bot.on('message', goalCreationHandler);
+      
+      // Iniciar o fluxo de criação de meta
+      goalConversations.set(telegramId, {
+        state: 'awaiting_title',
+        title: null,
+        targetAmount: null,
+        initialAmount: 0,
+        targetDate: null,
+        category: null
+      });
+      
+      // Enviar a primeira mensagem perguntando o nome da meta
+      await bot.sendMessage(
+        chatId,
+        "Vamos criar uma nova meta financeira! Por favor, dê um nome para a sua meta. Por exemplo: 'Celular novo', 'Viagem para a praia', etc.",
+        { parse_mode: 'Markdown' }
+      );
+      
+    } catch (error) {
+      console.error('Error in handleNewGoalCommand:', error);
+      return bot.sendMessage(
+        chatId,
+        "Desculpe, ocorreu um erro ao iniciar a criação da meta. Por favor, tente novamente.",
+        { parse_mode: 'Markdown' }
+      );
+    }
   }
-}
 
 /**
  * Manipula informações adicionais sobre metas
@@ -822,14 +1025,17 @@ async function handleGoalMessage(bot, msg, analysis) {
         "Desculpe, ocorreu um erro ao processar sua solicitação relacionada a metas. Por favor, tente novamente.",
         { parse_mode: 'Markdown' }
       );
-      return true; // Consideramos como processada para evitar processamento duplicado
+      return true; 
     }
   }
 
 // Exportar funções
 module.exports = {
-  handleGoalMessage,
-  handleGoalsCommand,
-  handleNewGoalCommand,
-  createGoalReminder
+    handleGoalMessage,
+    handleGoalsCommand,
+    handleNewGoalCommand,
+    handleGoalDetails,
+    handleGoalCallbacks,
+    createGoalReminder,
+    setBotInstance
 };
