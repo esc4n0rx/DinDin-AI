@@ -5,6 +5,7 @@ const llmService = require('../services/llm')
 const userConfigService = require('../services/userConfig')
 const personalityService = require('../services/personalityResponses')
 const reminderService = require('../services/reminderService');
+const dashboardService = require('../services/dashboardService');
 
 // Configura o moment para PT-BR
 moment.locale('pt-br')
@@ -19,9 +20,13 @@ const commands = [
   { command: 'mes', description: 'Ver transações do mês' },
   { command: 'lembretes', description: 'Ver seus lembretes pendentes' },
   { command: 'reset', description: 'Apagar todos os seus dados e começar de novo' },
-  { command: 'ajuda', description: 'Mostrar comandos disponíveis' }
-
-
+  { command: 'ajuda', description: 'Mostrar comandos disponíveis' },
+  { command: 'dashboard', description: 'Ver dashboard visual das suas finanças' },
+  { command: 'grafico_despesas', description: 'Ver gráfico de despesas por categoria' },
+  { command: 'grafico_receitas', description: 'Ver gráfico de receitas por categoria' },
+  { command: 'grafico_evolucao', description: 'Ver gráfico de evolução financeira' },
+  { command: 'visualizar', description: 'Mostrar menu de visualizações e gráficos' },
+  { command: 'grafico_comparativo', description: 'Ver comparativo entre receitas e despesas' }
 ]
 
 // Função para formatar valores monetários
@@ -265,8 +270,8 @@ async function handlePersonalitySelection(bot, msg) {
 /mes - Ver transações do mês
 /configurar - Mudar minha personalidade
 /ajuda - Mostrar esta mensagem
-    `
-    
+`
+
     // Envia as mensagens de confirmação e ajuda
     await bot.sendMessage(chatId, confirmationMessage, { parse_mode: 'Markdown' })
     return bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' })
@@ -281,6 +286,8 @@ async function handlePersonalitySelection(bot, msg) {
 async function handleHelp(bot, msg) {
   const helpMessage = `
 📋 *Comandos Disponíveis:*
+
+*Principais Comandos:*
 /relatorio - Ver relatório financeiro mensal
 /hoje - Ver transações de hoje
 /semana - Ver transações da semana
@@ -288,6 +295,13 @@ async function handleHelp(bot, msg) {
 /lembretes - Ver seus lembretes pendentes
 /configurar - Mudar minha personalidade
 /ajuda - Mostrar esta mensagem
+
+*Comandos de Dashboard Visual:*
+/dashboard - Ver dashboard completo com todos os gráficos
+/grafico_despesas - Ver gráfico de despesas por categoria
+/grafico_receitas - Ver gráfico de receitas por categoria
+/grafico_evolucao - Ver gráfico de evolução do saldo
+/grafico_comparativo - Ver comparativo entre receitas e despesas
 
 ✏️ *Como usar:*
 • *Para registrar transações*: Ex. "Almoço 25,90" ou "Recebi 100 de presente"
@@ -686,6 +700,513 @@ async function handleListReminders(bot, msg) {
   }
 }
 
+/**
+ * Handler para o comando /dashboard
+ * Gera e envia todos os gráficos do dashboard
+ */
+async function handleDashboard(bot, msg, periodType = 'month') {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  
+  try {
+    // Enviar mensagem de que está processando
+    const loadingMessage = await bot.sendMessage(
+      chatId,
+      '📊 Gerando seu dashboard financeiro. Isso pode levar alguns segundos...',
+      { parse_mode: 'Markdown' }
+    );
+    
+    // Obter usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    
+    // Definir período do relatório
+    let startDate, endDate, periodTitle;
+    const now = new Date();
+    
+    switch (periodType) {
+      case 'day':
+        startDate = moment(now).startOf('day').toISOString();
+        endDate = moment(now).endOf('day').toISOString();
+        periodTitle = `Hoje (${moment(now).format('DD/MM/YYYY')})`;
+        break;
+      case 'week':
+        startDate = moment(now).startOf('week').toISOString();
+        endDate = moment(now).endOf('week').toISOString();
+        periodTitle = `Semana (${moment(now).startOf('week').format('DD/MM')} - ${moment(now).endOf('week').format('DD/MM')})`;
+        break;
+      case 'month':
+      default:
+        startDate = moment(now).startOf('month').toISOString();
+        endDate = moment(now).endOf('month').toISOString();
+        periodTitle = `Mês de ${moment(now).format('MMMM/YYYY')}`;
+        break;
+    }
+    
+    // Gera todos os gráficos
+    const dashboard = await dashboardService.generateDashboard(user.id, startDate, endDate);
+    
+    // Edita a mensagem de carregamento para remover a espera
+    await bot.editMessageText(
+      `📊 *Dashboard Financeiro - ${periodTitle}*\n\nAqui estão os gráficos da sua situação financeira:`,
+      {
+        chat_id: chatId,
+        message_id: loadingMessage.message_id,
+        parse_mode: 'Markdown'
+      }
+    );
+    
+    // Envia os gráficos com legendas apropriadas
+    await bot.sendPhoto(chatId, dashboard.expenseDistribution, {
+      caption: '📉 Distribuição de Despesas por Categoria'
+    });
+    
+    await bot.sendPhoto(chatId, dashboard.incomeDistribution, {
+      caption: '📈 Distribuição de Receitas por Categoria'
+    });
+    
+    await bot.sendPhoto(chatId, dashboard.expenseTimeSeries, {
+      caption: '📊 Evolução das Despesas ao Longo do Tempo'
+    });
+    
+    await bot.sendPhoto(chatId, dashboard.incomeExpenseComparison, {
+      caption: '📊 Comparativo entre Receitas e Despesas'
+    });
+    
+    await bot.sendPhoto(chatId, dashboard.balanceEvolution, {
+      caption: '📊 Evolução do seu Saldo'
+    });
+    
+    // Adiciona botões para diferentes períodos
+    const periodKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Hoje', callback_data: 'dashboard_day' },
+            { text: 'Semana', callback_data: 'dashboard_week' },
+            { text: 'Mês', callback_data: 'dashboard_month' }
+          ]
+        ]
+      }
+    };
+    
+    await bot.sendMessage(
+      chatId,
+      'Você pode visualizar seu dashboard para diferentes períodos:',
+      periodKeyboard
+    );
+    
+  } catch (error) {
+    console.error(`Error in handleDashboard (${periodType}):`, error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao gerar o dashboard. Talvez você ainda não tenha transações suficientes neste período.');
+  }
+}
+
+/**
+ * Handler para o comando /grafico_despesas
+ * Gera e envia o gráfico de distribuição de despesas por categoria
+ */
+async function handleExpenseChart(bot, msg, periodType = 'month') {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  
+  try {
+    // Enviar mensagem de que está processando
+    const loadingMessage = await bot.sendMessage(
+      chatId,
+      '📊 Gerando gráfico de despesas. Um momento...',
+      { parse_mode: 'Markdown' }
+    );
+    
+    // Obter usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    
+    // Definir período do relatório
+    let startDate, endDate, periodTitle;
+    const now = new Date();
+    
+    switch (periodType) {
+      case 'day':
+        startDate = moment(now).startOf('day').toISOString();
+        endDate = moment(now).endOf('day').toISOString();
+        periodTitle = `Hoje (${moment(now).format('DD/MM/YYYY')})`;
+        break;
+      case 'week':
+        startDate = moment(now).startOf('week').toISOString();
+        endDate = moment(now).endOf('week').toISOString();
+        periodTitle = `Semana (${moment(now).startOf('week').format('DD/MM')} - ${moment(now).endOf('week').format('DD/MM')})`;
+        break;
+      case 'month':
+      default:
+        startDate = moment(now).startOf('month').toISOString();
+        endDate = moment(now).endOf('month').toISOString();
+        periodTitle = `Mês de ${moment(now).format('MMMM/YYYY')}`;
+        break;
+    }
+    
+    // Gera o gráfico
+    const chartPath = await dashboardService.generateCategoryDistributionChart(user.id, startDate, endDate, 'expense');
+    
+    // Remove a mensagem de carregamento
+    await bot.deleteMessage(chatId, loadingMessage.message_id);
+    
+    // Envia o gráfico
+    await bot.sendPhoto(chatId, chartPath, {
+      caption: `📉 Distribuição de Despesas por Categoria - ${periodTitle}`
+    });
+    
+    // Adiciona botões para diferentes períodos
+    const periodKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Hoje', callback_data: 'expense_chart_day' },
+            { text: 'Semana', callback_data: 'expense_chart_week' },
+            { text: 'Mês', callback_data: 'expense_chart_month' }
+          ]
+        ]
+      }
+    };
+    
+    await bot.sendMessage(
+      chatId,
+      'Você pode visualizar este gráfico para diferentes períodos:',
+      periodKeyboard
+    );
+    
+  } catch (error) {
+    console.error(`Error in handleExpenseChart (${periodType}):`, error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao gerar o gráfico. Talvez você ainda não tenha despesas neste período.');
+  }
+}
+
+async function handleIncomeChart(bot, msg, periodType = 'month') {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  
+  try {
+    // Enviar mensagem de que está processando
+    const loadingMessage = await bot.sendMessage(
+      chatId,
+      '📊 Gerando gráfico de receitas. Um momento...',
+      { parse_mode: 'Markdown' }
+
+    );
+    
+    // Obter usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    
+    // Definir período do relatório
+    let startDate, endDate, periodTitle;
+    const now = new Date();
+    
+    switch (periodType) {
+      case 'day':
+        startDate = moment(now).startOf('day').toISOString();
+        endDate = moment(now).endOf('day').toISOString();
+        periodTitle = `Hoje (${moment(now).format('DD/MM/YYYY')})`;
+        break;
+      case 'week':
+        startDate = moment(now).startOf('week').toISOString();
+        endDate = moment(now).endOf('week').toISOString();
+        periodTitle = `Semana (${moment(now).startOf('week').format('DD/MM')} - ${moment(now).endOf('week').format('DD/MM')})`;
+        break;
+      case 'month':
+      default:
+        startDate = moment(now).startOf('month').toISOString();
+        endDate = moment(now).endOf('month').toISOString();
+        periodTitle = `Mês de ${moment(now).format('MMMM/YYYY')}`;
+        break;
+    }
+    
+    // Gera o gráfico
+    const chartPath = await dashboardService.generateCategoryDistributionChart(user.id, startDate, endDate, 'income');
+    
+    // Remove a mensagem de carregamento
+    await bot.deleteMessage(chatId, loadingMessage.message_id);
+    
+    // Envia o gráfico
+    await bot.sendPhoto(chatId, chartPath, {
+      caption: `📈 Distribuição de Receitas por Categoria - ${periodTitle}`
+    });
+    
+    // Adiciona botões para diferentes períodos
+    const periodKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Hoje', callback_data: 'income_chart_day' },
+            { text: 'Semana', callback_data: 'income_chart_week' },
+            { text: 'Mês', callback_data: 'income_chart_month' }
+          ]
+        ]
+      }
+    };
+    
+    await bot.sendMessage(
+      chatId,
+      'Você pode visualizar este gráfico para diferentes períodos:',
+      periodKeyboard
+    );
+    
+  } catch (error) {
+    console.error(`Error in handleIncomeChart (${periodType}):`, error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao gerar o gráfico. Talvez você ainda não tenha receitas neste período.');
+  }
+}
+
+/**
+ * Handler para o comando /grafico_evolucao
+ * Gera e envia o gráfico de evolução do saldo
+ */
+async function handleBalanceEvolutionChart(bot, msg, periodType = 'month') {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  
+  try {
+    // Enviar mensagem de que está processando
+    const loadingMessage = await bot.sendMessage(
+      chatId,
+      '📊 Gerando gráfico de evolução do saldo. Um momento...',
+      { parse_mode: 'Markdown' }
+    );
+    
+    // Obter usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    
+    // Definir período do relatório
+    let startDate, endDate, periodTitle;
+    const now = new Date();
+    
+    switch (periodType) {
+      case 'day':
+        startDate = moment(now).startOf('day').toISOString();
+        endDate = moment(now).endOf('day').toISOString();
+        periodTitle = `Hoje (${moment(now).format('DD/MM/YYYY')})`;
+        break;
+      case 'week':
+        startDate = moment(now).startOf('week').toISOString();
+        endDate = moment(now).endOf('week').toISOString();
+        periodTitle = `Semana (${moment(now).startOf('week').format('DD/MM')} - ${moment(now).endOf('week').format('DD/MM')})`;
+        break;
+      case 'month':
+      default:
+        startDate = moment(now).startOf('month').toISOString();
+        endDate = moment(now).endOf('month').toISOString();
+        periodTitle = `Mês de ${moment(now).format('MMMM/YYYY')}`;
+        break;
+    }
+    
+    // Gera o gráfico
+    const chartPath = await dashboardService.generateBalanceEvolutionChart(user.id, startDate, endDate);
+    
+    // Remove a mensagem de carregamento
+    await bot.deleteMessage(chatId, loadingMessage.message_id);
+    
+    // Envia o gráfico
+    await bot.sendPhoto(chatId, chartPath, {
+      caption: `📊 Evolução do Saldo - ${periodTitle}`
+    });
+    
+    // Adiciona botões para diferentes períodos
+    const periodKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Hoje', callback_data: 'balance_chart_day' },
+            { text: 'Semana', callback_data: 'balance_chart_week' },
+            { text: 'Mês', callback_data: 'balance_chart_month' }
+          ]
+        ]
+      }
+    };
+    
+    await bot.sendMessage(
+      chatId,
+      'Você pode visualizar este gráfico para diferentes períodos:',
+      periodKeyboard
+    );
+    
+  } catch (error) {
+    console.error(`Error in handleBalanceEvolutionChart (${periodType}):`, error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao gerar o gráfico. Talvez você ainda não tenha transações suficientes neste período.');
+  }
+}
+
+/**
+ * Handler para o comando /grafico_comparativo
+ * Gera e envia o gráfico comparativo de receitas e despesas
+ */
+async function handleComparisonChart(bot, msg, periodType = 'month') {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  
+  try {
+    // Enviar mensagem de que está processando
+    const loadingMessage = await bot.sendMessage(
+      chatId,
+      '📊 Gerando gráfico comparativo. Um momento...',
+      { parse_mode: 'Markdown' }
+    );
+    
+    // Obter usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    
+    // Definir período do relatório
+    let startDate, endDate, periodTitle;
+    const now = new Date();
+    
+    switch (periodType) {
+      case 'day':
+        startDate = moment(now).startOf('day').toISOString();
+        endDate = moment(now).endOf('day').toISOString();
+        periodTitle = `Hoje (${moment(now).format('DD/MM/YYYY')})`;
+        break;
+      case 'week':
+        startDate = moment(now).startOf('week').toISOString();
+        endDate = moment(now).endOf('week').toISOString();
+        periodTitle = `Semana (${moment(now).startOf('week').format('DD/MM')} - ${moment(now).endOf('week').format('DD/MM')})`;
+        break;
+      case 'month':
+      default:
+        startDate = moment(now).startOf('month').toISOString();
+        endDate = moment(now).endOf('month').toISOString();
+        periodTitle = `Mês de ${moment(now).format('MMMM/YYYY')}`;
+        break;
+    }
+    
+    // Gera o gráfico
+    const chartPath = await dashboardService.generateIncomeExpenseComparisonChart(user.id, startDate, endDate);
+    
+    // Remove a mensagem de carregamento
+    await bot.deleteMessage(chatId, loadingMessage.message_id);
+    
+    // Envia o gráfico
+    await bot.sendPhoto(chatId, chartPath, {
+      caption: `📊 Comparativo entre Receitas e Despesas - ${periodTitle}`
+    });
+    
+    // Adiciona botões para diferentes períodos
+    const periodKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Hoje', callback_data: 'comparison_chart_day' },
+            { text: 'Semana', callback_data: 'comparison_chart_week' },
+            { text: 'Mês', callback_data: 'comparison_chart_month' }
+          ]
+        ]
+      }
+    };
+    
+    await bot.sendMessage(
+      chatId,
+      'Você pode visualizar este gráfico para diferentes períodos:',
+      periodKeyboard
+    );
+    
+  } catch (error) {
+    console.error(`Error in handleComparisonChart (${periodType}):`, error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao gerar o gráfico. Talvez você ainda não tenha transações suficientes neste período.');
+  }
+}
+
+/**
+ * Handler para os callbacks dos botões de período do dashboard
+ */
+async function handleDashboardCallbacks(bot, callbackQuery) {
+  try {
+    const chatId = callbackQuery.message.chat.id;
+    const data = callbackQuery.data;
+    
+    // Responde ao callback para remover o loading
+    await bot.answerCallbackQuery(callbackQuery.id);
+    
+    if (data.startsWith('dashboard_')) {
+      const period = data.split('_')[1]; // day, week, month
+      await handleDashboard(bot, callbackQuery.message, period);
+    } 
+    else if (data.startsWith('expense_chart_')) {
+      const period = data.split('_')[2]; // day, week, month
+      await handleExpenseChart(bot, callbackQuery.message, period);
+    }
+    else if (data.startsWith('income_chart_')) {
+      const period = data.split('_')[2]; // day, week, month
+      await handleIncomeChart(bot, callbackQuery.message, period);
+    }
+    else if (data.startsWith('balance_chart_')) {
+      const period = data.split('_')[2]; // day, week, month
+      await handleBalanceEvolutionChart(bot, callbackQuery.message, period);
+    }
+    else if (data.startsWith('comparison_chart_')) {
+      const period = data.split('_')[2]; // day, week, month
+      await handleComparisonChart(bot, callbackQuery.message, period);
+    }
+  } catch (error) {
+    console.error('Error in handleDashboardCallbacks:', error);
+    await bot.sendMessage(callbackQuery.message.chat.id, '❌ Ocorreu um erro ao processar sua solicitação.');
+  }
+}
+
+
+/**
+ * Mostra um menu interativo com opções de gráficos
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ */
+async function handleDashboardMenu(bot, msg) {
+  const chatId = msg.chat.id;
+  
+  try {
+    // Obter configuração do usuário
+    const { id: telegramId } = msg.from;
+    const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+    const userConfig = await userConfigService.getUserConfig(user.id);
+    
+    // Mensagem personalizada com base na personalidade
+    let message;
+    
+    if (userConfig.personality === PERSONALITIES.FRIENDLY) {
+      message = '📊 *Menu de Visualizações*\n\nOlá! Escolha o tipo de visualização que você gostaria de ver:';
+    } else if (userConfig.personality === PERSONALITIES.SASSY) {
+      message = '📊 *Hora de ver onde o dinheiro foi parar*\n\nVamos lá, escolha qual gráfico você quer ver (prepare-se para possíveis sustos):';
+    } else {
+      message = '📊 *Dashboard Financeiro*\n\nSelecione o tipo de visualização desejada:';
+    }
+    
+    // Criar teclado inline com botões para os diferentes tipos de gráficos
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '📊 Dashboard Completo', callback_data: 'dashboard_month' }
+          ],
+          [
+            { text: '💸 Despesas por Categoria', callback_data: 'expense_chart_month' }
+          ],
+          [
+            { text: '💰 Receitas por Categoria', callback_data: 'income_chart_month' }
+          ],
+          [
+            { text: '📈 Evolução do Saldo', callback_data: 'balance_chart_month' }
+          ],
+          [
+            { text: '📊 Comparativo Receitas x Despesas', callback_data: 'comparison_chart_month' }
+          ]
+        ]
+      }
+    };
+    
+    // Enviar mensagem com o teclado
+    await bot.sendMessage(chatId, message, { 
+      parse_mode: 'Markdown',
+      ...keyboard
+    });
+    
+  } catch (error) {
+    console.error('Error in handleDashboardMenu:', error);
+    return bot.sendMessage(chatId, '❌ Ocorreu um erro ao exibir o menu de dashboard.');
+  }
+}
 
 
 
@@ -700,5 +1221,11 @@ module.exports = {
   handleReport,
   handleReset,
   handleListReminders,
-  createPersonalityKeyboard
+  createPersonalityKeyboard,
+  handleDashboard,
+  handleExpenseChart,
+  handleIncomeChart,
+  handleBalanceEvolutionChart,
+  handleComparisonChart,
+  handleDashboardCallbacks
 }

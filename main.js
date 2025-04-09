@@ -58,7 +58,13 @@ async function initApp() {
     bot.onText(/\/semana/, (msg) => handlers.handleReport(bot, msg, 'week'))
     bot.onText(/\/mes/, (msg) => handlers.handleReport(bot, msg, 'month'))
     bot.onText(/\/reset/, (msg) => handlers.handleReset(bot, msg))
-    
+    bot.onText(/\/dashboard/, (msg) => handlers.handleDashboard(bot, msg, 'month'))
+    bot.onText(/\/grafico_despesas/, (msg) => handlers.handleExpenseChart(bot, msg, 'month'))
+    bot.onText(/\/grafico_receitas/, (msg) => handlers.handleIncomeChart(bot, msg, 'month'))
+    bot.onText(/\/grafico_evolucao/, (msg) => handlers.handleBalanceEvolutionChart(bot, msg, 'month'))
+    bot.onText(/\/grafico_comparativo/, (msg) => handlers.handleComparisonChart(bot, msg, 'month'))
+    bot.onText(/\/visualizar/, (msg) => handlers.handleDashboardMenu(bot, msg))
+      
     // Novo comando para lembretes
     bot.onText(/\/lembretes/, (msg) => handlers.handleListReminders(bot, msg))
     
@@ -80,6 +86,16 @@ async function initApp() {
         if (callbackData.startsWith('complete_reminder:')) {
           // Processa conclusão de lembrete
           await reminderScheduler.handleReminderCompletion(bot, callbackQuery)
+        }
+        else if (
+          callbackData.startsWith('dashboard_') || 
+          callbackData.startsWith('expense_chart_') ||
+          callbackData.startsWith('income_chart_') ||
+          callbackData.startsWith('balance_chart_') ||
+          callbackData.startsWith('comparison_chart_')
+        ) {
+          // Processa callbacks de dashboard
+          await handlers.handleDashboardCallbacks(bot, callbackQuery)
         }
         // Aqui podem ser adicionados outros tipos de callback no futuro
       } catch (error) {
