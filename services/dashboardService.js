@@ -1,16 +1,11 @@
 /**
  * dashboardService.js
  * Serviço para geração de dashboards visuais para o Telegram
- * 
- * Este serviço permite a criação de gráficos e visualizações de dados
- * financeiros que podem ser enviados como imagens pelo Telegram.
+ * Versão que usa QuickChart.io para gerar gráficos
  */
 
-const { createCanvas } = require('canvas');
-const Chart = require('chart.js/auto');
+const axios = require('axios');
 const moment = require('moment');
-const fs = require('fs');
-const path = require('path');
 const { supabase } = require('./supabase');
 
 // Configuração de cores para categorias
@@ -33,21 +28,16 @@ const CATEGORY_COLORS = {
   'Outros': '#607D8B'
 };
 
-// Diretório para armazenar imagens temporárias
-const TEMP_DIR = path.join(__dirname, '../temp');
-
-// Garante que o diretório temp existe
-if (!fs.existsSync(TEMP_DIR)) {
-  fs.mkdirSync(TEMP_DIR, { recursive: true });
-}
+// Base URL para QuickChart.io
+const QUICKCHART_URL = 'https://quickchart.io/chart';
 
 /**
- * Gera um gráfico de distribuição de gastos por categoria
+ * Gera um gráfico de distribuição de gastos por categoria usando QuickChart
  * @param {number} userId - ID do usuário
  * @param {string} startDate - Data inicial no formato ISO
  * @param {string} endDate - Data final no formato ISO
  * @param {string} type - Tipo de transação ('expense' ou 'income')
- * @returns {Promise<string>} - Caminho para o arquivo de imagem gerado
+ * @returns {Promise<string>} - URL do gráfico gerado
  */
 async function generateCategoryDistributionChart(userId, startDate, endDate, type = 'expense') {
   try {
@@ -87,12 +77,8 @@ async function generateCategoryDistributionChart(userId, startDate, endDate, typ
     const data = sortedCategories.map(([, amount]) => amount);
     const colors = labels.map(label => CATEGORY_COLORS[label] || '#' + Math.floor(Math.random()*16777215).toString(16));
     
-    // Cria o canvas
-    const canvas = createCanvas(600, 400);
-    const ctx = canvas.getContext('2d');
-    
-    // Gera o gráfico
-    new Chart(ctx, {
+    // Define a configuração do gráfico para QuickChart
+    const chartConfig = {
       type: 'pie',
       data: {
         labels: labels,
@@ -103,7 +89,6 @@ async function generateCategoryDistributionChart(userId, startDate, endDate, typ
         }]
       },
       options: {
-        responsive: false,
         plugins: {
           legend: {
             position: 'right',
@@ -122,20 +107,21 @@ async function generateCategoryDistributionChart(userId, startDate, endDate, typ
           }
         }
       }
+    };
+    
+    // Gera a URL do gráfico
+    const response = await axios.post(QUICKCHART_URL, {
+      chart: chartConfig,
+      width: 600,
+      height: 400,
+      format: 'png',
+      backgroundColor: 'white'
+    }, {
+      responseType: 'arraybuffer'
     });
     
-    // Salva a imagem
-    const fileName = `category_distribution_${userId}_${Date.now()}.png`;
-    const filePath = path.join(TEMP_DIR, fileName);
-    
-    const out = fs.createWriteStream(filePath);
-    const stream = canvas.createPNGStream();
-    stream.pipe(out);
-    
-    return new Promise((resolve, reject) => {
-      out.on('finish', () => resolve(filePath));
-      out.on('error', reject);
-    });
+    // Retorna os dados da imagem como Buffer
+    return Buffer.from(response.data);
   } catch (error) {
     console.error('Erro ao gerar gráfico de distribuição:', error);
     throw error;
@@ -148,7 +134,7 @@ async function generateCategoryDistributionChart(userId, startDate, endDate, typ
  * @param {string} startDate - Data inicial no formato ISO
  * @param {string} endDate - Data final no formato ISO
  * @param {string} type - Tipo de transação ('expense' ou 'income')
- * @returns {Promise<string>} - Caminho para o arquivo de imagem gerado
+ * @returns {Promise<string>} - URL do gráfico gerado
  */
 async function generateTimeSeriesChart(userId, startDate, endDate, type = 'expense') {
   try {
@@ -191,12 +177,8 @@ async function generateTimeSeriesChart(userId, startDate, endDate, type = 'expen
     // Ordena as datas
     days.sort();
     
-    // Cria o canvas
-    const canvas = createCanvas(800, 400);
-    const ctx = canvas.getContext('2d');
-    
-    // Gera o gráfico
-    new Chart(ctx, {
+    // Define a configuração do gráfico para QuickChart
+    const chartConfig = {
       type: 'line',
       data: {
         labels: days.map(d => moment(d).format('DD/MM')),
@@ -210,7 +192,6 @@ async function generateTimeSeriesChart(userId, startDate, endDate, type = 'expen
         }]
       },
       options: {
-        responsive: false,
         plugins: {
           title: {
             display: true,
@@ -233,20 +214,21 @@ async function generateTimeSeriesChart(userId, startDate, endDate, type = 'expen
           }
         }
       }
+    };
+    
+    // Gera a URL do gráfico
+    const response = await axios.post(QUICKCHART_URL, {
+      chart: chartConfig,
+      width: 800,
+      height: 400,
+      format: 'png',
+      backgroundColor: 'white'
+    }, {
+      responseType: 'arraybuffer'
     });
     
-    // Salva a imagem
-    const fileName = `time_series_${userId}_${Date.now()}.png`;
-    const filePath = path.join(TEMP_DIR, fileName);
-    
-    const out = fs.createWriteStream(filePath);
-    const stream = canvas.createPNGStream();
-    stream.pipe(out);
-    
-    return new Promise((resolve, reject) => {
-      out.on('finish', () => resolve(filePath));
-      out.on('error', reject);
-    });
+    // Retorna os dados da imagem como Buffer
+    return Buffer.from(response.data);
   } catch (error) {
     console.error('Erro ao gerar gráfico de série temporal:', error);
     throw error;
@@ -258,7 +240,7 @@ async function generateTimeSeriesChart(userId, startDate, endDate, type = 'expen
  * @param {number} userId - ID do usuário
  * @param {string} startDate - Data inicial no formato ISO
  * @param {string} endDate - Data final no formato ISO
- * @returns {Promise<string>} - Caminho para o arquivo de imagem gerado
+ * @returns {Promise<string>} - URL do gráfico gerado
  */
 async function generateIncomeExpenseComparisonChart(userId, startDate, endDate) {
   try {
@@ -315,12 +297,8 @@ async function generateIncomeExpenseComparisonChart(userId, startDate, endDate) 
       }
     };
     
-    // Cria o canvas
-    const canvas = createCanvas(800, 500);
-    const ctx = canvas.getContext('2d');
-    
-    // Gera o gráfico
-    new Chart(ctx, {
+    // Define a configuração do gráfico para QuickChart
+    const chartConfig = {
       type: 'bar',
       data: {
         labels: periods.map(formatLabel),
@@ -342,7 +320,6 @@ async function generateIncomeExpenseComparisonChart(userId, startDate, endDate) 
         ]
       },
       options: {
-        responsive: false,
         plugins: {
           title: {
             display: true,
@@ -363,20 +340,21 @@ async function generateIncomeExpenseComparisonChart(userId, startDate, endDate) 
           }
         }
       }
+    };
+    
+    // Gera a URL do gráfico
+    const response = await axios.post(QUICKCHART_URL, {
+      chart: chartConfig,
+      width: 800,
+      height: 500,
+      format: 'png',
+      backgroundColor: 'white'
+    }, {
+      responseType: 'arraybuffer'
     });
     
-    // Salva a imagem
-    const fileName = `comparison_${userId}_${Date.now()}.png`;
-    const filePath = path.join(TEMP_DIR, fileName);
-    
-    const out = fs.createWriteStream(filePath);
-    const stream = canvas.createPNGStream();
-    stream.pipe(out);
-    
-    return new Promise((resolve, reject) => {
-      out.on('finish', () => resolve(filePath));
-      out.on('error', reject);
-    });
+    // Retorna os dados da imagem como Buffer
+    return Buffer.from(response.data);
   } catch (error) {
     console.error('Erro ao gerar gráfico comparativo:', error);
     throw error;
@@ -388,7 +366,7 @@ async function generateIncomeExpenseComparisonChart(userId, startDate, endDate) 
  * @param {number} userId - ID do usuário
  * @param {string} startDate - Data inicial no formato ISO
  * @param {string} endDate - Data final no formato ISO
- * @returns {Promise<string>} - Caminho para o arquivo de imagem gerado
+ * @returns {Promise<string>} - URL do gráfico gerado
  */
 async function generateBalanceEvolutionChart(userId, startDate, endDate) {
   try {
@@ -438,12 +416,8 @@ async function generateBalanceEvolutionChart(userId, startDate, endDate) {
       currentDate.add(1, 'day');
     }
     
-    // Cria o canvas
-    const canvas = createCanvas(800, 400);
-    const ctx = canvas.getContext('2d');
-    
-    // Gera o gráfico
-    new Chart(ctx, {
+    // Define a configuração do gráfico para QuickChart
+    const chartConfig = {
       type: 'line',
       data: {
         labels: dates.map(d => moment(d).format('DD/MM')),
@@ -457,7 +431,6 @@ async function generateBalanceEvolutionChart(userId, startDate, endDate) {
         }]
       },
       options: {
-        responsive: false,
         plugins: {
           title: {
             display: true,
@@ -477,47 +450,24 @@ async function generateBalanceEvolutionChart(userId, startDate, endDate) {
           }
         }
       }
+    };
+    
+    // Gera a URL do gráfico
+    const response = await axios.post(QUICKCHART_URL, {
+      chart: chartConfig,
+      width: 800,
+      height: 400,
+      format: 'png',
+      backgroundColor: 'white'
+    }, {
+      responseType: 'arraybuffer'
     });
     
-    // Salva a imagem
-    const fileName = `balance_evolution_${userId}_${Date.now()}.png`;
-    const filePath = path.join(TEMP_DIR, fileName);
-    
-    const out = fs.createWriteStream(filePath);
-    const stream = canvas.createPNGStream();
-    stream.pipe(out);
-    
-    return new Promise((resolve, reject) => {
-      out.on('finish', () => resolve(filePath));
-      out.on('error', reject);
-    });
+    // Retorna os dados da imagem como Buffer
+    return Buffer.from(response.data);
   } catch (error) {
     console.error('Erro ao gerar gráfico de evolução de saldo:', error);
     throw error;
-  }
-}
-
-/**
- * Limpa arquivos temporários antigos
- * @param {number} maxAgeMinutes - Idade máxima dos arquivos em minutos
- */
-function cleanupTempFiles(maxAgeMinutes = 60) {
-  try {
-    const files = fs.readdirSync(TEMP_DIR);
-    const now = Date.now();
-    
-    files.forEach(file => {
-      const filePath = path.join(TEMP_DIR, file);
-      const stats = fs.statSync(filePath);
-      const fileAge = (now - stats.mtimeMs) / (1000 * 60); // idade em minutos
-      
-      if (fileAge > maxAgeMinutes) {
-        fs.unlinkSync(filePath);
-        console.log(`Arquivo temporário removido: ${file}`);
-      }
-    });
-  } catch (error) {
-    console.error('Erro ao limpar arquivos temporários:', error);
   }
 }
 
@@ -526,20 +476,17 @@ function cleanupTempFiles(maxAgeMinutes = 60) {
  * @param {number} userId - ID do usuário
  * @param {string} startDate - Data inicial no formato ISO
  * @param {string} endDate - Data final no formato ISO
- * @returns {Promise<Object>} - Objeto com caminhos para os arquivos de imagem gerados
+ * @returns {Promise<Object>} - Objeto com os dados dos gráficos gerados
  */
 async function generateDashboard(userId, startDate, endDate) {
   try {
-    // Limpa arquivos temporários antigos
-    cleanupTempFiles();
-    
     // Gera todos os gráficos em paralelo
     const [
-      expenseDistributionPath,
-      incomeDistributionPath,
-      expenseTimeSeriesPath,
-      incomeExpenseComparisonPath,
-      balanceEvolutionPath
+      expenseDistribution,
+      incomeDistribution,
+      expenseTimeSeries,
+      incomeExpenseComparison,
+      balanceEvolution
     ] = await Promise.all([
       generateCategoryDistributionChart(userId, startDate, endDate, 'expense'),
       generateCategoryDistributionChart(userId, startDate, endDate, 'income'),
@@ -549,11 +496,11 @@ async function generateDashboard(userId, startDate, endDate) {
     ]);
     
     return {
-      expenseDistribution: expenseDistributionPath,
-      incomeDistribution: incomeDistributionPath,
-      expenseTimeSeries: expenseTimeSeriesPath,
-      incomeExpenseComparison: incomeExpenseComparisonPath,
-      balanceEvolution: balanceEvolutionPath
+      expenseDistribution,
+      incomeDistribution,
+      expenseTimeSeries,
+      incomeExpenseComparison,
+      balanceEvolution
     };
   } catch (error) {
     console.error('Erro ao gerar dashboard:', error);
@@ -566,6 +513,5 @@ module.exports = {
   generateTimeSeriesChart,
   generateIncomeExpenseComparisonChart,
   generateBalanceEvolutionChart,
-  generateDashboard,
-  cleanupTempFiles
+  generateDashboard
 };
