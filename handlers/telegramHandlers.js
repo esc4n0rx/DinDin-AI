@@ -6,8 +6,10 @@ const userConfigService = require('../services/userConfig')
 const personalityService = require('../services/personalityResponses')
 const reminderService = require('../services/reminderService');
 const dashboardService = require('../services/dashboardService');
+const goalService = require('../services/goalService');
 
 moment.locale('pt-br')
+
 
 const commands = [
   { command: 'start', description: 'Iniciar o assistente financeiro' },
@@ -17,6 +19,8 @@ const commands = [
   { command: 'semana', description: 'Ver transações da semana' },
   { command: 'mes', description: 'Ver transações do mês' },
   { command: 'lembretes', description: 'Ver seus lembretes pendentes' },
+  { command: 'metas', description: 'Ver suas metas financeiras' },
+  { command: 'novameta', description: 'Criar uma nova meta financeira' },
   { command: 'reset', description: 'Apagar todos os seus dados e começar de novo' },
   { command: 'ajuda', description: 'Mostrar comandos disponíveis' },
   { command: 'dashboard', description: 'Ver dashboard visual das suas finanças' },
