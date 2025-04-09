@@ -215,6 +215,8 @@ async function handleGoalCreation(bot, msg, analysis, user, userConfig) {
   }
 }
 
+
+
 /**
  * Manipula a confirmação e criação final da meta
  * @param {TelegramBot} bot - Instância do bot do Telegram
@@ -1028,6 +1030,362 @@ async function handleGoalMessage(bot, msg, analysis) {
       return true; 
     }
   }
+
+
+/**
+ * Manipula o comando para ver detalhes de uma meta específica
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem do Telegram
+ */
+async function handleGoalDetails(bot, msg) {
+    const { id: telegramId } = msg.from;
+    const chatId = msg.chat.id;
+    const text = msg.text;
+  
+    try {
+      // Extrair o número ou nome da meta da mensagem
+      let goalId;
+      const commandParts = text.split(' ');
+      
+      if (commandParts.length < 2) {
+        return bot.sendMessage(chatId, 'Por favor, especifique o número ou nome da meta. Exemplo: /metadetalhes 1 ou /metadetalhes Viagem');
+      }
+      
+      // Obter usuário e configurações
+      const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+      const userConfig = await userConfigService.getUserConfig(user.id);
+      
+      // Obter todas as metas do usuário
+      const userGoals = await goalService.getUserGoals(user.id);
+      
+      if (userGoals.length === 0) {
+        return bot.sendMessage(
+          chatId,
+          "Você ainda não tem nenhuma meta financeira. Para criar uma, diga 'Quero criar uma meta para [objetivo]'.",
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      // Tentar encontrar a meta por número ou nome
+      let targetGoal;
+      const queryParam = commandParts.slice(1).join(' ');
+      
+      // Tentar interpretar como número
+      const goalIndex = parseInt(queryParam) - 1; // índices começam em 0, mas para o usuário começam em 1
+      
+      if (!isNaN(goalIndex) && goalIndex >= 0 && goalIndex < userGoals.length) {
+        // É um número válido
+        targetGoal = userGoals[goalIndex];
+      } else {
+        // Não é um número válido, tentar encontrar por nome
+        targetGoal = userGoals.find(goal => 
+          goal.title.toLowerCase().includes(queryParam.toLowerCase())
+        );
+      }
+      
+      if (!targetGoal) {
+        return bot.sendMessage(
+          chatId,
+          `Não encontrei uma meta com o identificador "${queryParam}". Por favor, use /metas para ver suas metas disponíveis.`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      // Obter estatísticas da meta
+      const stats = await goalService.getGoalStatistics(targetGoal.id, user.id);
+      
+      // Enviar resposta com detalhes da meta
+      const goalDetailsMessage = personalityService.getResponse(
+        userConfig.personality,
+        'goalQuerySingle',
+        targetGoal,
+        stats
+      );
+      
+      // Botões de ação para a meta
+      const goalActionKeyboard = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { 
+                text: 'Adicionar valor', 
+                callback_data: `goal_add:${targetGoal.id}` 
+              },
+              { 
+                text: targetGoal.completed ? 'Reabrir meta' : 'Marcar concluída', 
+                callback_data: `goal_toggle:${targetGoal.id}` 
+              }
+            ],
+            [
+              { 
+                text: 'Criar lembrete', 
+                callback_data: `goal_reminder:${targetGoal.id}` 
+              },
+              { 
+                text: 'Excluir meta', 
+                callback_data: `goal_delete:${targetGoal.id}` 
+              }
+            ]
+          ]
+        }
+      };
+      
+      return bot.sendMessage(
+        chatId, 
+        goalDetailsMessage, 
+        { 
+          parse_mode: 'Markdown',
+          ...goalActionKeyboard
+        }
+      );
+    } catch (error) {
+      console.error('Error in handleGoalDetails:', error);
+      return bot.sendMessage(
+        chatId,
+        "Desculpe, ocorreu um erro ao exibir os detalhes da meta. Por favor, tente novamente.",
+        { parse_mode: 'Markdown' }
+      );
+    }
+  }
+
+
+  /**
+ * Manipula callbacks relacionados a metas financeiras
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} callbackQuery - Objeto de callback do Telegram
+ */
+async function handleGoalCallbacks(bot, callbackQuery) {
+    const chatId = callbackQuery.message.chat.id;
+    const { id: telegramId } = callbackQuery.from;
+    const data = callbackQuery.data;
+  
+    try {
+      // Obter usuário e configurações
+      const user = await supabaseService.getOrCreateUser(
+        telegramId, 
+        callbackQuery.from.first_name, 
+        callbackQuery.from.last_name, 
+        callbackQuery.from.username
+      );
+      const userConfig = await userConfigService.getUserConfig(user.id);
+  
+      // Parsear os dados do callback
+      const [action, goalId] = data.split(':');
+  
+      if (!goalId) {
+        return bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Erro: Identificador da meta não encontrado',
+          show_alert: true
+        });
+      }
+  
+      // Verificar se a meta existe e pertence ao usuário
+      const goal = await goalService.getGoalById(goalId, user.id);
+      if (!goal) {
+        return bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Esta meta não foi encontrada ou não pertence a você.',
+          show_alert: true
+        });
+      }
+  
+      switch (action) {
+        case 'goal_add': {
+          // Adicionar valor à meta
+          await bot.answerCallbackQuery(callbackQuery.id, {
+            text: 'Informe o valor a adicionar'
+          });
+  
+          // Configurar estado para esperar o valor
+          userStates.set(telegramId, {
+            state: 'awaiting_goal_contribution',
+            userId: user.id,
+            goalId: goalId
+          });
+  
+          await bot.sendMessage(
+            chatId,
+            `Quanto você quer adicionar à meta "${goal.title}"? Digite apenas o valor numérico.`,
+            { parse_mode: 'Markdown' }
+          );
+          break;
+        }
+  
+        case 'goal_toggle': {
+          // Alternar status da meta (concluída/não concluída)
+          const newStatus = !goal.completed;
+  
+          await goalService.updateGoal(goalId, user.id, {
+            completed: newStatus
+          });
+  
+          await bot.answerCallbackQuery(callbackQuery.id, {
+            text: newStatus ? 'Meta marcada como concluída! 🎉' : 'Meta reaberta para contribuições'
+          });
+  
+          // Atualizar a mensagem original
+          const stats = await goalService.getGoalStatistics(goalId, user.id);
+          const updatedGoal = await goalService.getGoalById(goalId, user.id);
+  
+          const updatedMessage = personalityService.getResponse(
+            userConfig.personality,
+            'goalQuerySingle',
+            updatedGoal,
+            stats
+          );
+  
+          // Botões atualizados
+          const goalActionKeyboard = {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { 
+                    text: 'Adicionar valor', 
+                    callback_data: `goal_add:${goalId}` 
+                  },
+                  { 
+                    text: updatedGoal.completed ? 'Reabrir meta' : 'Marcar concluída', 
+                    callback_data: `goal_toggle:${goalId}` 
+                  }
+                ],
+                [
+                  { 
+                    text: 'Criar lembrete', 
+                    callback_data: `goal_reminder:${goalId}` 
+                  },
+                  { 
+                    text: 'Excluir meta', 
+                    callback_data: `goal_delete:${goalId}` 
+                  }
+                ]
+              ]
+            }
+          };
+  
+          await bot.editMessageText(
+            updatedMessage,
+            {
+              chat_id: chatId,
+              message_id: callbackQuery.message.message_id,
+              parse_mode: 'Markdown',
+              ...goalActionKeyboard
+            }
+          );
+          break;
+        }
+  
+        case 'goal_reminder': {
+          // Criar lembrete para a meta
+          await bot.answerCallbackQuery(callbackQuery.id);
+  
+          const reminderOptions = {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: 'Diário', callback_data: `goal_reminder_daily:${goalId}` },
+                  { text: 'Semanal', callback_data: `goal_reminder_weekly:${goalId}` },
+                  { text: 'Mensal', callback_data: `goal_reminder_monthly:${goalId}` }
+                ]
+              ]
+            }
+          };
+  
+          await bot.sendMessage(
+            chatId,
+            `Com qual frequência você deseja receber lembretes para a meta "${goal.title}"?`,
+            reminderOptions
+          );
+          break;
+        }
+  
+        case 'goal_reminder_daily':
+        case 'goal_reminder_weekly':
+        case 'goal_reminder_monthly': {
+          // Processar frequência de lembrete
+          const frequency = action.split('_')[2]; // daily, weekly, monthly
+  
+          await createGoalReminder(bot, callbackQuery.message, goalId, frequency, user, userConfig);
+          
+          await bot.answerCallbackQuery(callbackQuery.id, {
+            text: `Lembrete ${frequency} criado com sucesso!`
+          });
+          break;
+        }
+  
+        case 'goal_delete': {
+          // Confirmar exclusão da meta
+          await bot.answerCallbackQuery(callbackQuery.id);
+  
+          const deleteConfirmKeyboard = {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: 'Sim, excluir', callback_data: `goal_delete_confirm:${goalId}` },
+                  { text: 'Não, cancelar', callback_data: `goal_delete_cancel:${goalId}` }
+                ]
+              ]
+            }
+          };
+  
+          await bot.sendMessage(
+            chatId,
+            `Tem certeza que deseja excluir a meta "${goal.title}"? Esta ação não pode ser desfeita.`,
+            deleteConfirmKeyboard
+          );
+          break;
+        }
+  
+        case 'goal_delete_confirm': {
+          // Excluir a meta definitivamente
+          await goalService.deleteGoal(goalId, user.id);
+  
+          await bot.answerCallbackQuery(callbackQuery.id, {
+            text: 'Meta excluída com sucesso'
+          });
+  
+          await bot.sendMessage(
+            chatId,
+            `A meta "${goal.title}" foi excluída permanentemente.`,
+            { parse_mode: 'Markdown' }
+          );
+          break;
+        }
+  
+        case 'goal_delete_cancel': {
+          // Cancelar a exclusão da meta
+          await bot.answerCallbackQuery(callbackQuery.id, {
+            text: 'Operação cancelada'
+          });
+          
+          await bot.sendMessage(
+            chatId,
+            `A exclusão da meta "${goal.title}" foi cancelada.`,
+            { parse_mode: 'Markdown' }
+          );
+          break;
+        }
+  
+        default:
+          await bot.answerCallbackQuery(callbackQuery.id, {
+            text: 'Ação não reconhecida'
+          });
+          break;
+      }
+    } catch (error) {
+      console.error('Error in handleGoalCallbacks:', error);
+      
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: 'Ocorreu um erro ao processar sua solicitação',
+        show_alert: true
+      });
+      
+      await bot.sendMessage(
+        chatId,
+        "Desculpe, ocorreu um erro ao processar sua solicitação. Por favor, tente novamente.",
+        { parse_mode: 'Markdown' }
+      );
+    }
+  }
+
 
 // Exportar funções
 module.exports = {
