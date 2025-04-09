@@ -1,8 +1,7 @@
 require('dotenv').config()
 const TelegramBot = require('node-telegram-bot-api')
-
-
 const handlers = require('./handlers/telegramHandlers')
+const goalHandlers = require('./handlers/goalHandlers')
 const userConfigService = require('./services/userConfig')
 const reminderScheduler = require('./services/reminderScheduler')
 
@@ -55,11 +54,10 @@ async function initApp() {
     bot.onText(/\/mes/, (msg) => handlers.handleReport(bot, msg, 'month'))
     bot.onText(/\/reset/, (msg) => handlers.handleReset(bot, msg))
     bot.onText(/\/lembretes/, (msg) => handlers.handleListReminders(bot, msg))
-    bot.onText(/\/meta/, (msg) => handlers.handleCreateGoal(bot, msg))
-    bot.onText(/\/metas/, (msg) => handlers.handleListGoals(bot, msg))
-    bot.onText(/\/metadetalhes(.*)/, (msg) => handlers.handleGoalDetails(bot, msg))
-
-
+    bot.onText(/\/meta/, (msg) => goalHandlers.handleNewGoalCommand(bot, msg))
+    bot.onText(/\/metas/, (msg) => goalHandlers.handleGoalsCommand(bot, msg))
+    bot.onText(/\/metadetalhes(.*)/, (msg) => goalHandlers.handleGoalDetails(bot, msg))
+    bot.onText(/\/novameta/, (msg) => goalHandlers.handleNewGoalCommand(bot, msg))
     bot.onText(/\/dashboard/, (msg) => handlers.handleDashboard(bot, msg, 'month'))
     bot.onText(/\/grafico_despesas/, (msg) => handlers.handleExpenseChart(bot, msg, 'month'))
     bot.onText(/\/grafico_receitas/, (msg) => handlers.handleIncomeChart(bot, msg, 'month'))
@@ -91,6 +89,9 @@ async function initApp() {
         ) {
 
           await handlers.handleDashboardCallbacks(bot, callbackQuery)
+        }
+        else if (callbackData.startsWith('goal_')) {
+          await goalHandlers.handleGoalCallbacks(bot, callbackQuery)
         }
         
       } catch (error) {

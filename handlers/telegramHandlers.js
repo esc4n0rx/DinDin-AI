@@ -341,6 +341,11 @@ o
     if (analysis.isReminder) {
       return handleReminderCreation(bot, msg, user, userConfig, analysis);
     }
+
+    if (analysis.isGoal) {
+      const goalHandlers = require('./goalHandlers');
+      return goalHandlers.handleGoalMessage(bot, msg, analysis);
+    }
     
     if (!analysis.isTransaction) {
       const notTransactionMessage = personalityService.getResponse(
