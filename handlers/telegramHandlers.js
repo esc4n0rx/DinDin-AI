@@ -7,10 +7,8 @@ const personalityService = require('../services/personalityResponses')
 const reminderService = require('../services/reminderService');
 const dashboardService = require('../services/dashboardService');
 
-// Configura o moment para PT-BR
 moment.locale('pt-br')
 
-// Define comandos disponíveis
 const commands = [
   { command: 'start', description: 'Iniciar o assistente financeiro' },
   { command: 'configurar', description: 'Configurar sua personalidade preferida' },
@@ -29,15 +27,13 @@ const commands = [
   { command: 'grafico_comparativo', description: 'Ver comparativo entre receitas e despesas' }
 ]
 
-// Função para formatar valores monetários
 const formatCurrency = (value) => {
   return `R$ ${numeral(value).format('0,0.00')}`
 }
 
-// Estados dos usuários para o processo de configuração
+
 const userStates = new Map()
 
-// Função para criar teclado de personalidades
 function createPersonalityKeyboard() {
   return {
     reply_markup: {
@@ -52,8 +48,6 @@ function createPersonalityKeyboard() {
   }
 }
 
-// Handler para o comando /start
-// Handler para o comando /start
 async function handleStart(bot, msg) {
   const { id: telegramId, first_name, last_name, username } = msg.from
   const chatId = msg.chat.id
@@ -61,19 +55,15 @@ async function handleStart(bot, msg) {
   try {
     console.log(`Iniciando configuração para usuário ${telegramId} (${first_name})`)
     
-    // Cadastra o usuário no banco de dados
     const user = await supabaseService.getOrCreateUser(telegramId, first_name, last_name, username)
     
-    // Verifica se o usuário já completou a configuração
     const userConfig = await userConfigService.getUserConfig(user.id)
     
-    // Força a exibição do menu de personalidades sempre que /start for chamado
     const forceConfigMenu = msg.text && msg.text.includes('/start')
     
     if (!userConfig.setup_completed || forceConfigMenu) {
       console.log(`Exibindo menu de personalidades para usuário ${telegramId}`)
       
-      // Inicia o processo de configuração
       await bot.sendMessage(
         chatId, 
         `Olá, ${first_name}! Bem-vindo ao *DinDin AI* - seu assistente financeiro inteligente! 🤖💰\n\nAntes de começarmos, vamos personalizar sua experiência. Como você prefere que eu me comunique com você?`,
@@ -83,24 +73,20 @@ async function handleStart(bot, msg) {
         }
       )
       
-      // Define o estado do usuário para aguardar a escolha da personalidade
       userStates.set(telegramId, { state: 'awaiting_personality', userId: user.id })
       console.log(`Estado do usuário ${telegramId} definido para: awaiting_personality`)
       
       return
     }
     
-    // Se já configurou, envia mensagem de boas-vindas normal
     const welcomeMessage = personalityService.getResponse(
       userConfig.personality,
       'introduction',
       first_name
     )
-    
-    // Configura os comandos para o bot
+
     await bot.setMyCommands(commands)
     
-    // Envia a mensagem de boas-vindas com as instruções
     const helpMessage = `
 📋 *Comandos Disponíveis:*
 /relatorio - Ver relatório financeiro mensal
@@ -112,7 +98,6 @@ async function handleStart(bot, msg) {
 /ajuda - Mostrar esta mensagem
     `
     
-    // Envia as duas mensagens
     await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' })
     return bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' })
     
@@ -122,16 +107,13 @@ async function handleStart(bot, msg) {
   }
 }
 
-// Handler para o comando /configurar
 async function handleConfigure(bot, msg) {
   const { id: telegramId, first_name } = msg.from
   const chatId = msg.chat.id
   
   try {
-    // Obtém o usuário
     const user = await supabaseService.getOrCreateUser(telegramId, first_name, msg.from.last_name, msg.from.username)
     
-    // Envia mensagem de configuração
     await bot.sendMessage(
       chatId, 
       `Vamos personalizar sua experiência! Como você prefere que eu me comunique com você?`,
@@ -141,7 +123,6 @@ async function handleConfigure(bot, msg) {
       }
     )
     
-    // Define o estado do usuário para aguardar a escolha da personalidade
     userStates.set(telegramId, { state: 'awaiting_personality', userId: user.id })
     
   } catch (error) {
@@ -149,13 +130,13 @@ async function handleConfigure(bot, msg) {
     return bot.sendMessage(chatId, '❌ Ocorreu um erro ao iniciar a configuração.')
   }
 }
-// Handler para o comando /reset
+
 async function handleReset(bot, msg) {
   const { id: telegramId, first_name } = msg.from
   const chatId = msg.chat.id
   
   try {
-    // Encontrar o usuário pelo ID do telegram
+
     const { data: existingUser } = await supabaseService.supabase
       .from('users')
       .select('id, telegram_id')
@@ -166,37 +147,37 @@ async function handleReset(bot, msg) {
       return bot.sendMessage(chatId, 'Não encontrei nenhuma configuração para você. Use /start para iniciar o bot.');
     }
     
-    // Excluir configurações do usuário
+
     await supabaseService.supabase
       .from('user_configs')
       .delete()
       .eq('user_id', existingUser.id)
     
-    // Excluir todas as transações do usuário
+
     await supabaseService.supabase
       .from('transactions')
       .delete()
       .eq('user_id', existingUser.id)
     
-    // Opcional: excluir o próprio usuário
+
      await supabaseService.supabase
       .from('users')
       .delete()
       .eq('id', existingUser.id)
     
-    // Remover estados em memória
+
     if (userStates.has(telegramId)) {
       userStates.delete(telegramId)
     }
     
-    // Enviar mensagem de confirmação
+
     await bot.sendMessage(
       chatId, 
       `🗑️ Todos os seus dados foram resetados com sucesso, ${first_name}!\n\nUtilize /start para configurar o bot novamente.`,
       { parse_mode: 'Markdown' }
     )
     
-    // Iniciar novamente o processo de configuração
+
     setTimeout(() => handleStart(bot, msg), 1000)
     
   } catch (error) {
@@ -206,22 +187,22 @@ async function handleReset(bot, msg) {
 }
 
 
-// Handler para processar a escolha de personalidade
+
 async function handlePersonalitySelection(bot, msg) {
   const { id: telegramId, first_name } = msg.from
   const chatId = msg.chat.id
   const text = msg.text
   
   try {
-    // Verifica se o usuário está no estado de aguardar personalidade
+
     const userState = userStates.get(telegramId)
     if (!userState || userState.state !== 'awaiting_personality') {
-      return handleMessage(bot, msg) // Não está esperando personalidade, trata como mensagem normal
+      return handleMessage(bot, msg)
     }
     
     console.log(`Recebida seleção de personalidade: "${text}" do usuário ${telegramId}`)
     
-    // Determina qual personalidade foi escolhida
+
     let personality
     if (text.includes('Amigável') || text.includes('amigavel') || text.includes('Amigavel')) {
       personality = userConfigService.PERSONALITIES.FRIENDLY
@@ -230,7 +211,7 @@ async function handlePersonalitySelection(bot, msg) {
     } else if (text.includes('Profissional') || text.includes('profissional') || text.includes('conciso')) {
       personality = userConfigService.PERSONALITIES.PROFESSIONAL
     } else {
-      // Opção inválida, pede para escolher novamente
+
       console.log(`Opção de personalidade não reconhecida: "${text}"`)
       return bot.sendMessage(
         chatId,
@@ -241,16 +222,16 @@ async function handlePersonalitySelection(bot, msg) {
     
     console.log(`Personalidade selecionada: ${personality} para usuário ${telegramId}`)
     
-    // Salva a configuração do usuário
+
     await userConfigService.saveUserConfig(userState.userId, {
       personality: personality,
       setup_completed: true
     })
     
-    // Remove o estado do usuário
+
     userStates.delete(telegramId)
     
-    // Mensagens de confirmação com base na personalidade
+
     let confirmationMessage
     
     if (personality === userConfigService.PERSONALITIES.FRIENDLY) {
@@ -261,7 +242,6 @@ async function handlePersonalitySelection(bot, msg) {
       confirmationMessage = `Configuração concluída. Utilizarei comunicação profissional e concisa. 👔\n\nVocê pode iniciar o registro de suas transações financeiras agora. Exemplos: "Refeição corporativa 35,00" ou "Honorários recebidos 3000,00".`
     }
     
-    // Mensagem de ajuda
     const helpMessage = `
 📋 *Comandos Disponíveis:*
 /relatorio - Ver relatório financeiro mensal
@@ -272,7 +252,6 @@ async function handlePersonalitySelection(bot, msg) {
 /ajuda - Mostrar esta mensagem
 `
 
-    // Envia as mensagens de confirmação e ajuda
     await bot.sendMessage(chatId, confirmationMessage, { parse_mode: 'Markdown' })
     return bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' })
     
@@ -282,7 +261,6 @@ async function handlePersonalitySelection(bot, msg) {
   }
 }
 
-// Handler para o comando /ajuda
 async function handleHelp(bot, msg) {
   const helpMessage = `
 📋 *Comandos Disponíveis:*
@@ -311,17 +289,15 @@ async function handleHelp(bot, msg) {
   return bot.sendMessage(msg.chat.id, helpMessage, { parse_mode: 'Markdown' });
 }
 
-// Handler para processar mensagens normais (potenciais transações)
-// Handler para processar mensagens normais (potenciais transações)
 async function handleMessage(bot, msg) {
   const { id: telegramId, first_name } = msg.from
   const chatId = msg.chat.id
   const userMsg = msg.text
   
-  // Verifica se o usuário está em um processo de configuração
+
   const userState = userStates.get(telegramId)
   if (userState) {
-    // Se estiver aguardando personalidade, processa a escolha
+
     if (userState.state === 'awaiting_personality') {
       console.log(`Usuário ${telegramId} está em estado de escolha de personalidade, redirecionando para handlePersonalitySelection`)
       return handlePersonalitySelection(bot, msg)
@@ -329,40 +305,38 @@ async function handleMessage(bot, msg) {
   }
   
   try {
-    // Verifica se é uma opção de personalidade mesmo sem estar no estado
+
     if (userMsg.includes('Amigável') || userMsg.includes('Debochado') || userMsg.includes('Profissional')) {
       console.log(`Detectada possível escolha de personalidade "${userMsg}" fora do estado`)
       
-      // Obtém o usuário
+
       const user = await supabaseService.getOrCreateUser(telegramId, first_name, msg.from.last_name, msg.from.username)
       
-      // Cria um estado temporário
+o
       userStates.set(telegramId, { state: 'awaiting_personality', userId: user.id })
       
-      // Processa como escolha de personalidade
+
       return handlePersonalitySelection(bot, msg)
     }
     
-    // Obter ou criar usuário
+
     const user = await supabaseService.getOrCreateUser(telegramId, first_name, msg.from.last_name, msg.from.username)
     
-    // Obtém a configuração do usuário
+
     const userConfig = await userConfigService.getUserConfig(user.id)
     
-    // Se o usuário não finalizou a configuração, inicia o processo
+
     if (!userConfig.setup_completed) {
       console.log(`Usuário ${telegramId} não finalizou a configuração, iniciando setup`)
       return handleStart(bot, msg)
     }
     
-    // Analisa a mensagem com o LLM
     const analysis = await llmService.analyzeMessage(userMsg)
 
     if (analysis.isReminder) {
       return handleReminderCreation(bot, msg, user, userConfig, analysis);
     }
     
-    // Se não for uma transação, responde com uma mensagem personalizada
     if (!analysis.isTransaction) {
       const notTransactionMessage = personalityService.getResponse(
         userConfig.personality,
@@ -371,15 +345,15 @@ async function handleMessage(bot, msg) {
       return bot.sendMessage(chatId, notTransactionMessage, { parse_mode: 'Markdown' })
     }
     
-    // Processa a transação
+
     const { type, amount, description, category, date } = analysis
     
-    // Encontra a categoria no banco de dados
+
     const categoryData = await supabaseService.getCategoryByName(category, type)
 
     const currentDate = new Date();
     
-    // Cria a transação
+
     const transaction = await supabaseService.createTransaction(
       user.id,
       categoryData.id,
@@ -389,7 +363,7 @@ async function handleMessage(bot, msg) {
       currentDate
     )
     
-    // Personaliza a mensagem de confirmação com base no tipo e personalidade
+
     let confirmationMessage
     
     if (type === 'income') {
@@ -408,7 +382,6 @@ async function handleMessage(bot, msg) {
       )
     }
     
-    // Adiciona a data formatada ao final da mensagem
     const dateFormatted = moment(transaction.transaction_date).format('DD/MM/YYYY')
     confirmationMessage += `\n📅 *Data:* ${dateFormatted}`
     
@@ -419,19 +392,18 @@ async function handleMessage(bot, msg) {
   }
 }
 
-// Handler para gerar relatórios
 async function handleReport(bot, msg, periodType) {
   const { id: telegramId } = msg.from
   const chatId = msg.chat.id
   
   try {
-    // Obter usuário
+
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username)
     
-    // Obter configuração do usuário
+
     const userConfig = await userConfigService.getUserConfig(user.id)
     
-    // Definir período do relatório
+
     let startDate, endDate, periodTitle
     const now = new Date()
     
@@ -454,13 +426,13 @@ async function handleReport(bot, msg, periodType) {
         break
     }
     
-    // Obter resumo financeiro
+
     const summary = await supabaseService.getSummary(user.id, startDate, endDate)
     
-    // Obter transações do período
+
     const transactions = await supabaseService.getUserTransactions(user.id, startDate, endDate)
     
-    // Preparar mensagem de relatório
+
     let reportMessage = `
 📊 *Relatório Financeiro - ${periodTitle}*
 
@@ -469,7 +441,7 @@ async function handleReport(bot, msg, periodType) {
 🏦 *Saldo:* ${formatCurrency(summary.balance)}
 `
     
-    // Adicionar comentário personalizado sobre saúde financeira
+
     const healthComment = personalityService.getResponse(
       userConfig.personality,
       'financialHealthComment',
@@ -480,11 +452,11 @@ async function handleReport(bot, msg, periodType) {
     
     reportMessage += `\n${healthComment}`
     
-    // Adiciona detalhamento por categoria se houver transações
+
     if (transactions.length > 0) {
       reportMessage += `\n\n📋 *Detalhamento por Categoria:*\n`
       
-      // Separar categorias por tipo
+
       const expenseCategories = []
       const incomeCategories = []
       
@@ -496,18 +468,18 @@ async function handleReport(bot, msg, periodType) {
         }
       })
       
-      // Ordenar por valor (maior para menor)
+
       expenseCategories.sort((a, b) => b.total - a.total)
       incomeCategories.sort((a, b) => b.total - a.total)
       
-      // Adicionar categorias de despesa
+
       if (expenseCategories.length > 0) {
         reportMessage += `\n💸 *Despesas:*\n`
         expenseCategories.forEach(cat => {
           reportMessage += `${cat.icon} ${cat.name}: ${formatCurrency(cat.total)}\n`
         })
         
-        // Verifica se há alguma categoria com gasto elevado para comentar
+
         if (expenseCategories.length > 0 && summary.expense > 0) {
           const highestCategory = expenseCategories[0]
           const comment = personalityService.getResponse(
@@ -524,7 +496,7 @@ async function handleReport(bot, msg, periodType) {
         }
       }
       
-      // Adicionar categorias de receita
+
       if (incomeCategories.length > 0) {
         reportMessage += `\n💰 *Receitas:*\n`
         incomeCategories.forEach(cat => {
@@ -532,7 +504,7 @@ async function handleReport(bot, msg, periodType) {
         })
       }
       
-      // Adiciona últimas transações (máximo 10)
+
       const recentTransactions = transactions.slice(0, 10)
       
       if (recentTransactions.length > 0) {
@@ -550,7 +522,6 @@ async function handleReport(bot, msg, periodType) {
       reportMessage += `\n\n📭 Não há transações registradas neste período.`
     }
     
-    // Adiciona dica personalizada ao final
     const tip = personalityService.getResponse(
       userConfig.personality,
       'randomTip'
@@ -565,28 +536,19 @@ async function handleReport(bot, msg, periodType) {
   }
 }
 
-
-// Versão simplificada da função handleReminderCreation em handlers/telegramHandlers.js
-
 async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
   const chatId = msg.chat.id;
   
   try {
     console.log('Processando criação de lembrete:', analysis);
     
-    // Extrair informações do lembrete
     const { description, dueDate, dueTime, isRecurring, recurrencePattern } = analysis;
-    
-    // Combinar data e hora para criar o objeto de data
-    // Garantindo que temos valores válidos (o LLM já deve ter usado a data atual do servidor)
     const dueDateStr = dueDate || new Date().toISOString().split('T')[0];
     const dueTimeStr = dueTime || '09:00';
     
-    // Criar o objeto de data
     const dueDateObj = new Date(`${dueDateStr}T${dueTimeStr}`);
     console.log(`Data do lembrete: ${dueDateObj.toISOString()}`);
     
-    // Verificar se a data é válida
     if (isNaN(dueDateObj.getTime())) {
       console.error(`Data inválida criada: ${dueDateStr}T${dueTimeStr}`);
       return bot.sendMessage(
@@ -596,7 +558,6 @@ async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
       );
     }
     
-    // Criar o lembrete no banco de dados
     const reminder = await reminderService.createReminder(
       user.id,
       description,
@@ -605,13 +566,11 @@ async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
       recurrencePattern
     );
     
-    // Preparar a mensagem de confirmação
     const dateFormatted = moment(dueDateObj).format('DD/MM/YYYY [às] HH:mm');
     const recurrenceText = isRecurring 
       ? `\n⏰ Repetição: ${getRecurrenceText(recurrencePattern)}` 
       : '';
     
-    // Personalizar a resposta com base na personalidade do usuário
     const reminderForResponse = {
       description,
       dueDate: dueDateObj
@@ -630,7 +589,7 @@ async function handleReminderCreation(bot, msg, user, userConfig, analysis) {
   }
 }
 
-// Função auxiliar para formatar o texto de recorrência
+
 function getRecurrenceText(pattern) {
   switch (pattern) {
     case 'daily':
@@ -646,23 +605,21 @@ function getRecurrenceText(pattern) {
   }
 }
 
-// Novo comando para listar lembretes
 async function handleListReminders(bot, msg) {
   const { id: telegramId } = msg.from;
   const chatId = msg.chat.id;
   
   try {
-    // Obter usuário
+
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
     
-    // Obter lembretes do usuário
+
     const reminders = await reminderService.getUserReminders(user.id);
     
     if (reminders.length === 0) {
       return bot.sendMessage(chatId, '📝 Você não tem lembretes pendentes.');
     }
     
-    // Agrupar lembretes por data
     const remindersByDate = {};
     
     reminders.forEach(reminder => {
@@ -675,7 +632,7 @@ async function handleListReminders(bot, msg) {
       remindersByDate[date].push(reminder);
     });
     
-    // Construir a mensagem
+ 
     let message = '📝 *Seus Lembretes Pendentes*\n\n';
     
     Object.keys(remindersByDate).sort().forEach(date => {
@@ -700,26 +657,21 @@ async function handleListReminders(bot, msg) {
   }
 }
 
-/**
- * Handler para o comando /dashboard
- * Gera e envia todos os gráficos do dashboard
- */
 async function handleDashboard(bot, msg, periodType = 'month') {
   const { id: telegramId } = msg.from;
   const chatId = msg.chat.id;
   
   try {
-    // Enviar mensagem de que está processando
+
     const loadingMessage = await bot.sendMessage(
       chatId,
       '📊 Gerando seu dashboard financeiro. Isso pode levar alguns segundos...',
       { parse_mode: 'Markdown' }
     );
     
-    // Obter usuário
+
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
     
-    // Definir período do relatório
     let startDate, endDate, periodTitle;
     const now = new Date();
     
@@ -742,10 +694,9 @@ async function handleDashboard(bot, msg, periodType = 'month') {
         break;
     }
     
-    // Gera todos os gráficos
+
     const dashboard = await dashboardService.generateDashboard(user.id, startDate, endDate);
     
-    // Edita a mensagem de carregamento para remover a espera
     await bot.editMessageText(
       `📊 *Dashboard Financeiro - ${periodTitle}*\n\nAqui estão os gráficos da sua situação financeira:`,
       {
@@ -755,7 +706,6 @@ async function handleDashboard(bot, msg, periodType = 'month') {
       }
     );
     
-    // Envia os gráficos com legendas apropriadas
     await bot.sendPhoto(chatId, dashboard.expenseDistribution, {
       caption: '📉 Distribuição de Despesas por Categoria'
     });
@@ -776,7 +726,7 @@ async function handleDashboard(bot, msg, periodType = 'month') {
       caption: '📊 Evolução do seu Saldo'
     });
     
-    // Adiciona botões para diferentes períodos
+
     const periodKeyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -801,26 +751,23 @@ async function handleDashboard(bot, msg, periodType = 'month') {
   }
 }
 
-/**
- * Handler para o comando /grafico_despesas
- * Gera e envia o gráfico de distribuição de despesas por categoria
- */
+
 async function handleExpenseChart(bot, msg, periodType = 'month') {
   const { id: telegramId } = msg.from;
   const chatId = msg.chat.id;
   
   try {
-    // Enviar mensagem de que está processando
+
     const loadingMessage = await bot.sendMessage(
       chatId,
       '📊 Gerando gráfico de despesas. Um momento...',
       { parse_mode: 'Markdown' }
     );
     
-    // Obter usuário
+
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
     
-    // Definir período do relatório
+
     let startDate, endDate, periodTitle;
     const now = new Date();
     
@@ -843,18 +790,18 @@ async function handleExpenseChart(bot, msg, periodType = 'month') {
         break;
     }
     
-    // Gera o gráfico
+
     const chartPath = await dashboardService.generateCategoryDistributionChart(user.id, startDate, endDate, 'expense');
     
-    // Remove a mensagem de carregamento
+
     await bot.deleteMessage(chatId, loadingMessage.message_id);
     
-    // Envia o gráfico
+
     await bot.sendPhoto(chatId, chartPath, {
       caption: `📉 Distribuição de Despesas por Categoria - ${periodTitle}`
     });
     
-    // Adiciona botões para diferentes períodos
+
     const periodKeyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -884,7 +831,7 @@ async function handleIncomeChart(bot, msg, periodType = 'month') {
   const chatId = msg.chat.id;
   
   try {
-    // Enviar mensagem de que está processando
+
     const loadingMessage = await bot.sendMessage(
       chatId,
       '📊 Gerando gráfico de receitas. Um momento...',
@@ -892,10 +839,10 @@ async function handleIncomeChart(bot, msg, periodType = 'month') {
 
     );
     
-    // Obter usuário
+
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
     
-    // Definir período do relatório
+
     let startDate, endDate, periodTitle;
     const now = new Date();
     
@@ -918,18 +865,18 @@ async function handleIncomeChart(bot, msg, periodType = 'month') {
         break;
     }
     
-    // Gera o gráfico
+
     const chartPath = await dashboardService.generateCategoryDistributionChart(user.id, startDate, endDate, 'income');
     
-    // Remove a mensagem de carregamento
+
     await bot.deleteMessage(chatId, loadingMessage.message_id);
     
-    // Envia o gráfico
+
     await bot.sendPhoto(chatId, chartPath, {
       caption: `📈 Distribuição de Receitas por Categoria - ${periodTitle}`
     });
     
-    // Adiciona botões para diferentes períodos
+
     const periodKeyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -954,26 +901,23 @@ async function handleIncomeChart(bot, msg, periodType = 'month') {
   }
 }
 
-/**
- * Handler para o comando /grafico_evolucao
- * Gera e envia o gráfico de evolução do saldo
- */
+
 async function handleBalanceEvolutionChart(bot, msg, periodType = 'month') {
   const { id: telegramId } = msg.from;
   const chatId = msg.chat.id;
   
   try {
-    // Enviar mensagem de que está processando
+
     const loadingMessage = await bot.sendMessage(
       chatId,
       '📊 Gerando gráfico de evolução do saldo. Um momento...',
       { parse_mode: 'Markdown' }
     );
     
-    // Obter usuário
+
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
     
-    // Definir período do relatório
+
     let startDate, endDate, periodTitle;
     const now = new Date();
     
@@ -996,18 +940,17 @@ async function handleBalanceEvolutionChart(bot, msg, periodType = 'month') {
         break;
     }
     
-    // Gera o gráfico
+
     const chartPath = await dashboardService.generateBalanceEvolutionChart(user.id, startDate, endDate);
     
-    // Remove a mensagem de carregamento
+
     await bot.deleteMessage(chatId, loadingMessage.message_id);
     
-    // Envia o gráfico
+
     await bot.sendPhoto(chatId, chartPath, {
       caption: `📊 Evolução do Saldo - ${periodTitle}`
     });
     
-    // Adiciona botões para diferentes períodos
     const periodKeyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -1032,26 +975,21 @@ async function handleBalanceEvolutionChart(bot, msg, periodType = 'month') {
   }
 }
 
-/**
- * Handler para o comando /grafico_comparativo
- * Gera e envia o gráfico comparativo de receitas e despesas
- */
+
 async function handleComparisonChart(bot, msg, periodType = 'month') {
   const { id: telegramId } = msg.from;
   const chatId = msg.chat.id;
   
   try {
-    // Enviar mensagem de que está processando
+
     const loadingMessage = await bot.sendMessage(
       chatId,
       '📊 Gerando gráfico comparativo. Um momento...',
       { parse_mode: 'Markdown' }
     );
     
-    // Obter usuário
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
     
-    // Definir período do relatório
     let startDate, endDate, periodTitle;
     const now = new Date();
     
@@ -1074,18 +1012,18 @@ async function handleComparisonChart(bot, msg, periodType = 'month') {
         break;
     }
     
-    // Gera o gráfico
+
     const chartPath = await dashboardService.generateIncomeExpenseComparisonChart(user.id, startDate, endDate);
     
-    // Remove a mensagem de carregamento
+
     await bot.deleteMessage(chatId, loadingMessage.message_id);
     
-    // Envia o gráfico
+
     await bot.sendPhoto(chatId, chartPath, {
       caption: `📊 Comparativo entre Receitas e Despesas - ${periodTitle}`
     });
     
-    // Adiciona botões para diferentes períodos
+
     const periodKeyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -1110,35 +1048,32 @@ async function handleComparisonChart(bot, msg, periodType = 'month') {
   }
 }
 
-/**
- * Handler para os callbacks dos botões de período do dashboard
- */
 async function handleDashboardCallbacks(bot, callbackQuery) {
   try {
     const chatId = callbackQuery.message.chat.id;
     const data = callbackQuery.data;
     
-    // Responde ao callback para remover o loading
+
     await bot.answerCallbackQuery(callbackQuery.id);
     
     if (data.startsWith('dashboard_')) {
-      const period = data.split('_')[1]; // day, week, month
+      const period = data.split('_')[1]; 
       await handleDashboard(bot, callbackQuery.message, period);
     } 
     else if (data.startsWith('expense_chart_')) {
-      const period = data.split('_')[2]; // day, week, month
+      const period = data.split('_')[2]; 
       await handleExpenseChart(bot, callbackQuery.message, period);
     }
     else if (data.startsWith('income_chart_')) {
-      const period = data.split('_')[2]; // day, week, month
+      const period = data.split('_')[2]; 
       await handleIncomeChart(bot, callbackQuery.message, period);
     }
     else if (data.startsWith('balance_chart_')) {
-      const period = data.split('_')[2]; // day, week, month
+      const period = data.split('_')[2]; 
       await handleBalanceEvolutionChart(bot, callbackQuery.message, period);
     }
     else if (data.startsWith('comparison_chart_')) {
-      const period = data.split('_')[2]; // day, week, month
+      const period = data.split('_')[2]; 
       await handleComparisonChart(bot, callbackQuery.message, period);
     }
   } catch (error) {
@@ -1149,7 +1084,6 @@ async function handleDashboardCallbacks(bot, callbackQuery) {
 
 
 /**
- * Mostra um menu interativo com opções de gráficos
  * @param {TelegramBot} bot - Instância do bot do Telegram
  * @param {Object} msg - Objeto da mensagem do Telegram
  */
@@ -1157,12 +1091,11 @@ async function handleDashboardMenu(bot, msg) {
   const chatId = msg.chat.id;
   
   try {
-    // Obter configuração do usuário
+
     const { id: telegramId } = msg.from;
     const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
     const userConfig = await userConfigService.getUserConfig(user.id);
     
-    // Mensagem personalizada com base na personalidade
     let message;
     
     if (userConfig.personality === PERSONALITIES.FRIENDLY) {
@@ -1173,7 +1106,6 @@ async function handleDashboardMenu(bot, msg) {
       message = '📊 *Dashboard Financeiro*\n\nSelecione o tipo de visualização desejada:';
     }
     
-    // Criar teclado inline com botões para os diferentes tipos de gráficos
     const keyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -1196,7 +1128,6 @@ async function handleDashboardMenu(bot, msg) {
       }
     };
     
-    // Enviar mensagem com o teclado
     await bot.sendMessage(chatId, message, { 
       parse_mode: 'Markdown',
       ...keyboard
@@ -1208,9 +1139,6 @@ async function handleDashboardMenu(bot, msg) {
   }
 }
 
-
-
-// Exporta os handlers
 module.exports = {
   commands,
   handleStart,
