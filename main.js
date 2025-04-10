@@ -63,19 +63,39 @@ async function initApp() {
     bot.onText(/\/grafico_comparativo/, (msg) => handlers.handleComparisonChart(bot, msg, 'month'))
     bot.onText(/\/visualizar/, (msg) => handlers.handleDashboardMenu(bot, msg))
     
-    // Adicionamos um flag nas mensagens processadas pelo fluxo de metas
-    bot.on('message', (msg) => {
+    // Usar variável compartilhada para controlar se uma mensagem está sendo processada pelo fluxo de metas
+    let goalProcessingUsers = new Set();
+    
+    // Adicionamos um handler específico para verificar primeiro se a mensagem deve ser tratada pelo fluxo de metas
+    bot.on('message', async (msg) => {
       // Ignora mensagens que são comandos
       if (msg.text && msg.text.startsWith('/')) return;
       
-      // Verifica se esta mensagem está sendo processada pelo fluxo de metas
-      if (msg._processedByGoalFlow) {
-        console.log('Mensagem já processada pelo fluxo de metas, ignorando processamento padrão');
+      // Verifica se o usuário está no meio de um fluxo de metas
+      const telegramId = msg.from.id;
+      
+      if (goalHandlers.isUserInGoalFlow(telegramId)) {
+        console.log('Usuário está no fluxo de metas, direcionando para goalHandlers');
+        goalProcessingUsers.add(telegramId);
+        
+        try {
+          await goalHandlers.handleOngoingGoalFlow(bot, msg);
+        } catch (error) {
+          console.error('Erro ao processar fluxo de metas:', error);
+        }
+        
+        // Remove depois de processado para evitar bloqueios permanentes
+        setTimeout(() => {
+          goalProcessingUsers.delete(telegramId);
+        }, 1000);
+        
         return;
       }
       
-      // Processa como mensagem normal
-      handlers.handleMessage(bot, msg);
+      // Se não for um comando ou fluxo de metas em andamento, processa normalmente
+      if (!goalProcessingUsers.has(telegramId)) {
+        handlers.handleMessage(bot, msg);
+      }
     });
     
     bot.on('callback_query', async (callbackQuery) => {
