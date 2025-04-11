@@ -7,6 +7,7 @@ const personalityService = require('../services/personalityResponses')
 const reminderService = require('../services/reminderService');
 const dashboardService = require('../services/dashboardService');
 const goalService = require('../services/goalService');
+const incomeConfigHandler = require('./incomeConfigHandler');
 
 moment.locale('pt-br')
 
@@ -29,7 +30,11 @@ const commands = [
   { command: 'grafico_receitas', description: 'Ver gráfico de receitas por categoria' },
   { command: 'grafico_evolucao', description: 'Ver gráfico de evolução financeira' },
   { command: 'visualizar', description: 'Mostrar menu de visualizações e gráficos' },
-  { command: 'grafico_comparativo', description: 'Ver comparativo entre receitas e despesas' }
+  { command: 'grafico_comparativo', description: 'Ver comparativo entre receitas e despesas' },
+  // Novos comandos para configuração financeira
+  { command: 'renda', description: 'Gerenciar suas fontes de renda' },
+  { command: 'despesas', description: 'Gerenciar suas despesas recorrentes' },
+  { command: 'configurar_financas', description: 'Configurar fontes de renda e despesas recorrentes' }
 ]
 
 const formatCurrency = (value) => {
@@ -199,7 +204,7 @@ async function handlePersonalitySelection(bot, msg) {
   const text = msg.text
   
   try {
-
+    // Verificar se o usuário está em estado de escolha de personalidade
     const userState = userStates.get(telegramId)
     if (!userState || userState.state !== 'awaiting_personality') {
       return handleMessage(bot, msg)
@@ -207,7 +212,7 @@ async function handlePersonalitySelection(bot, msg) {
     
     console.log(`Recebida seleção de personalidade: "${text}" do usuário ${telegramId}`)
     
-
+    // Determinar a personalidade escolhida
     let personality
     if (text.includes('Amigável') || text.includes('amigavel') || text.includes('Amigavel')) {
       personality = userConfigService.PERSONALITIES.FRIENDLY
@@ -216,7 +221,7 @@ async function handlePersonalitySelection(bot, msg) {
     } else if (text.includes('Profissional') || text.includes('profissional') || text.includes('conciso')) {
       personality = userConfigService.PERSONALITIES.PROFESSIONAL
     } else {
-
+      // Não reconheceu a opção
       console.log(`Opção de personalidade não reconhecida: "${text}"`)
       return bot.sendMessage(
         chatId,
@@ -227,38 +232,34 @@ async function handlePersonalitySelection(bot, msg) {
     
     console.log(`Personalidade selecionada: ${personality} para usuário ${telegramId}`)
     
-
+    // Salvar a configuração do usuário
     await userConfigService.saveUserConfig(userState.userId, {
       personality: personality,
       setup_completed: true
     })
     
-
+    // Limpar o estado do usuário
     userStates.delete(telegramId)
     
-
+    // Mensagem de confirmação com base na personalidade
     let confirmationMessage
     
     if (personality === userConfigService.PERSONALITIES.FRIENDLY) {
-      confirmationMessage = `Ótimo! Vou ser amigável e tranquilo nas nossas conversas. 😊\n\nAgora você pode começar a registrar suas despesas e receitas. Basta me enviar mensagens como "Almoço 25,90" ou "Recebi salário 2500".`
+      confirmationMessage = `Ótimo! Vou ser amigável e tranquilo nas nossas conversas. 😊`
     } else if (personality === userConfigService.PERSONALITIES.SASSY) {
-      confirmationMessage = `Beleza! Vou ser debochado e engraçado, espero que aguente as verdades! 😜\n\nAgora é só mandar seus gastos pra eu julgar! Tipo "Fast food 30 pila" ou "Ganhei 100 mangos de bônus".`
+      confirmationMessage = `Beleza! Vou ser debochado e engraçado, espero que aguente as verdades! 😜`
     } else {
-      confirmationMessage = `Configuração concluída. Utilizarei comunicação profissional e concisa. 👔\n\nVocê pode iniciar o registro de suas transações financeiras agora. Exemplos: "Refeição corporativa 35,00" ou "Honorários recebidos 3000,00".`
+      confirmationMessage = `Configuração concluída. Utilizarei comunicação profissional e concisa. 👔`
     }
     
-    const helpMessage = `
-📋 *Comandos Disponíveis:*
-/relatorio - Ver relatório financeiro mensal
-/hoje - Ver transações de hoje
-/semana - Ver transações da semana
-/mes - Ver transações do mês
-/configurar - Mudar minha personalidade
-/ajuda - Mostrar esta mensagem
-`
-
     await bot.sendMessage(chatId, confirmationMessage, { parse_mode: 'Markdown' })
-    return bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' })
+    
+    // Iniciar fluxo de configuração de renda
+    setTimeout(() => {
+      incomeConfigHandler.startIncomeConfigFlow(bot, msg, true);
+    }, 1000);
+    
+    return true;
     
   } catch (error) {
     console.error('Error in handlePersonalitySelection:', error)
@@ -337,6 +338,24 @@ o
     }
     
     const analysis = await llmService.analyzeMessage(userMsg)
+
+    // Verificar se está no fluxo de configuração de renda
+    if (incomeConfigHandler.isUserInIncomeConfigFlow(telegramId)) {
+      // Verificar se é uma decisão após salvar
+      if (await incomeConfigHandler.handlePostSaveDecision(bot, msg)) {
+        return;
+      }
+      
+      // Verificar se é sobre configuração de despesas
+      if (await incomeConfigHandler.handleExpensesConfigMessage(bot, msg)) {
+        return;
+      }
+      
+      // Verificar se é sobre configuração de renda
+      if (await incomeConfigHandler.handleIncomeConfigMessage(bot, msg)) {
+        return;
+      }
+    }
 
     if (analysis.isReminder) {
       return handleReminderCreation(bot, msg, user, userConfig, analysis);
