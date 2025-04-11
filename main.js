@@ -375,23 +375,174 @@ async function handleRecurringExpensesManagement(bot, msg) {
 async function handleIncomeCallbacks(bot, callbackQuery) {
   const { data } = callbackQuery;
   const chatId = callbackQuery.message.chat.id;
+  const { id: telegramId } = callbackQuery.from;
   
   // Responder ao callback para remover o "carregando"
   await bot.answerCallbackQuery(callbackQuery.id);
   
   try {
+    // Obter o usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, callbackQuery.from.first_name, callbackQuery.from.last_name, callbackQuery.from.username);
+    
     if (data === 'income_config' || data === 'income_add') {
       // Iniciar fluxo de configuração de renda
       await incomeConfigHandler.startIncomeConfigFlow(bot, callbackQuery.message);
-    } else if (data === 'income_confirm') {
-      // Implementar confirmação de recebimento (próxima etapa)
-      await bot.sendMessage(chatId, "Funcionalidade de confirmação de recebimento será implementada em breve.");
-    } else if (data === 'income_edit') {
-      // Implementar edição de fonte de renda (próxima etapa)
-      await bot.sendMessage(chatId, "Funcionalidade de edição de fonte de renda será implementada em breve.");
-    } else if (data === 'income_delete') {
-      // Implementar remoção de fonte de renda (próxima etapa)
-      await bot.sendMessage(chatId, "Funcionalidade de remoção de fonte de renda será implementada em breve.");
+    } 
+    else if (data.startsWith('income_confirm:')) {
+      // Confirmação de recebimento de renda específica
+      const incomeId = data.split(':')[1];
+      
+      // Verificar se a fonte de renda existe
+      const incomeSource = await incomeSourceService.getIncomeSourceById(incomeId, user.id);
+      
+      if (!incomeSource) {
+        await bot.sendMessage(chatId, "Fonte de renda não encontrada ou não pertence a você.");
+        return;
+      }
+      
+      // Perguntar se o valor recebido foi diferente do esperado
+      const keyboard = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: `Sim, recebi R$ ${incomeSource.amount.toFixed(2)}`, callback_data: `income_confirm_exact:${incomeId}` }
+            ],
+            [
+              { text: 'Não, recebi um valor diferente', callback_data: `income_confirm_different:${incomeId}` }
+            ]
+          ]
+        }
+      };
+      
+      await bot.sendMessage(
+        chatId,
+        `Você está confirmando o recebimento de *${incomeSource.name}*.\n\nO valor esperado é R$ ${incomeSource.amount.toFixed(2)}. Você recebeu exatamente este valor?`,
+        { parse_mode: 'Markdown', ...keyboard }
+      );
+    }
+    else if (data.startsWith('income_confirm_exact:')) {
+      // Confirmação com valor exato
+      const incomeId = data.split(':')[1];
+      
+      // Confirmar o recebimento com o valor padrão
+      const updatedIncome = await incomeSourceService.confirmIncomeReceived(incomeId, user.id);
+      
+      // Criar a transação automaticamente
+      await supabaseService.createTransaction(
+        user.id,
+        null, // Sem categoria específica por enquanto
+        updatedIncome.amount,
+        `${updatedIncome.name} (Recebimento automático)`,
+        'income',
+        new Date()
+      );
+      
+      await bot.sendMessage(
+        chatId,
+        `✅ Recebimento de *${updatedIncome.name}* confirmado com sucesso!\n\nValor: R$ ${updatedIncome.amount.toFixed(2)}\nData: ${new Date().toLocaleDateString('pt-BR')}\n\nA transação foi registrada automaticamente.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Atualizar a próxima data de recebimento
+      await incomeSourceService.updateExpectedDates();
+      
+      // Mostrar próxima data de recebimento
+      const refreshedIncome = await incomeSourceService.getIncomeSourceById(incomeId, user.id);
+      if (refreshedIncome && refreshedIncome.next_expected_date) {
+        const nextDate = new Date(refreshedIncome.next_expected_date);
+        await bot.sendMessage(
+          chatId,
+          `📌 Próximo recebimento previsto para: ${nextDate.toLocaleDateString('pt-BR')}`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    }
+    else if (data.startsWith('income_confirm_different:')) {
+      // Confirmar com valor diferente
+      const incomeId = data.split(':')[1];
+      
+      // Armazenar o ID para processamento posterior
+      const userConfig = await userConfigService.getUserConfig(user.id);
+      userConfig.temp_income_id = incomeId;
+      await userConfigService.saveUserConfig(user.id, userConfig);
+      
+      await bot.sendMessage(
+        chatId,
+        "Por favor, informe o valor que você recebeu (apenas números, ex: 1500.50):",
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Adicionar ao estado para saber que estamos esperando um valor
+      const processingUsers = processingUsers || new Set();
+      processingUsers.add(telegramId);
+      
+      // Definir um estado temporário para este usuário
+      if (!global.userTempStates) global.userTempStates = new Map();
+      global.userTempStates.set(telegramId, {
+        state: 'awaiting_income_amount',
+        incomeId: incomeId
+      });
+      
+      setTimeout(() => {
+        if (processingUsers.has(telegramId)) {
+          processingUsers.delete(telegramId);
+        }
+      }, 60000); // Timeout de 1 minuto
+    }
+    else if (data === 'income_list') {
+      // Mostrar lista de fontes de renda (útil após confirmações)
+      await handleIncomeManagement(bot, callbackQuery.message);
+    }
+    else if (data.startsWith('income_edit:')) {
+      // Implementação básica de edição (completa na próxima etapa)
+      const incomeId = data.split(':')[1];
+      await bot.sendMessage(
+        chatId, 
+        `Funcionalidade de edição para fonte de renda ID ${incomeId} será implementada em breve.`
+      );
+    }
+    else if (data.startsWith('income_delete:')) {
+      // Confirmar exclusão
+      const incomeId = data.split(':')[1];
+      
+      const keyboard = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Sim, excluir fonte de renda', callback_data: `income_delete_confirm:${incomeId}` }
+            ],
+            [
+              { text: 'Não, cancelar', callback_data: 'income_list' }
+            ]
+          ]
+        }
+      };
+      
+      await bot.sendMessage(
+        chatId,
+        "Tem certeza que deseja excluir esta fonte de renda? Esta ação não pode ser desfeita.",
+        keyboard
+      );
+    }
+    else if (data.startsWith('income_delete_confirm:')) {
+      // Excluir fonte de renda
+      const incomeId = data.split(':')[1];
+      
+      // Obter nome para mensagem de confirmação
+      const income = await incomeSourceService.getIncomeSourceById(incomeId, user.id);
+      const incomeName = income ? income.name : "Fonte de renda";
+      
+      // Excluir
+      await incomeSourceService.deleteIncomeSource(incomeId, user.id);
+      
+      await bot.sendMessage(
+        chatId,
+        `✅ Fonte de renda "${incomeName}" excluída com sucesso.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Mostrar lista atualizada
+      setTimeout(() => handleIncomeManagement(bot, callbackQuery.message), 1000);
     }
   } catch (error) {
     console.error('Erro no handleIncomeCallbacks:', error);
@@ -403,6 +554,148 @@ async function handleIncomeCallbacks(bot, callbackQuery) {
   }
 }
 
+// Adicione esta função ao arquivo main.js
+/**
+ * Processa mensagens relacionadas a valores de renda/despesa
+ * @param {TelegramBot} bot - Instância do bot do Telegram
+ * @param {Object} msg - Objeto da mensagem
+ * @returns {boolean} Se a mensagem foi processada
+ */
+async function handleAmountMessages(bot, msg) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+  const text = msg.text;
+  
+  // Verificar se há um estado temporário para este usuário
+  if (!global.userTempStates || !global.userTempStates.has(telegramId)) {
+    return false;
+  }
+  
+  const tempState = global.userTempStates.get(telegramId);
+  
+  try {
+    if (tempState.state === 'awaiting_income_amount') {
+      // Processando valor personalizado para renda
+      // Validar e extrair valor
+      const amount = parseFloat(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+      
+      if (isNaN(amount) || amount <= 0) {
+        await bot.sendMessage(
+          chatId,
+          "Por favor, informe um valor numérico válido maior que zero.",
+          { parse_mode: 'Markdown' }
+        );
+        return true;
+      }
+      
+      const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+      
+      // Confirmar o recebimento com valor personalizado
+      const updatedIncome = await incomeSourceService.confirmIncomeReceived(
+        tempState.incomeId, 
+        user.id, 
+        amount
+      );
+      
+      // Criar a transação automaticamente
+      await supabaseService.createTransaction(
+        user.id,
+        null, // Sem categoria específica por enquanto
+        amount,
+        `${updatedIncome.name} (Recebimento automático)`,
+        'income',
+        new Date()
+      );
+      
+      await bot.sendMessage(
+        chatId,
+        `✅ Recebimento de *${updatedIncome.name}* confirmado com sucesso!\n\nValor: R$ ${amount.toFixed(2)}\nData: ${new Date().toLocaleDateString('pt-BR')}\n\nA transação foi registrada automaticamente.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Limpar o estado temporário
+      global.userTempStates.delete(telegramId);
+      
+      // Atualizar a próxima data de recebimento
+      await incomeSourceService.updateExpectedDates();
+      
+      // Mostrar próxima data de recebimento
+      const refreshedIncome = await incomeSourceService.getIncomeSourceById(tempState.incomeId, user.id);
+      if (refreshedIncome && refreshedIncome.next_expected_date) {
+        const nextDate = new Date(refreshedIncome.next_expected_date);
+        await bot.sendMessage(
+          chatId,
+          `📌 Próximo recebimento previsto para: ${nextDate.toLocaleDateString('pt-BR')}`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      return true;
+    }
+    else if (tempState.state === 'awaiting_expense_amount') {
+      // Processando valor personalizado para despesa
+      // Validar e extrair valor
+      const amount = parseFloat(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+      
+      if (isNaN(amount) || amount <= 0) {
+        await bot.sendMessage(
+          chatId,
+          "Por favor, informe um valor numérico válido maior que zero.",
+          { parse_mode: 'Markdown' }
+        );
+        return true;
+      }
+      
+      const user = await supabaseService.getOrCreateUser(telegramId, msg.from.first_name, msg.from.last_name, msg.from.username);
+      
+      // Confirmar o pagamento com valor personalizado
+      const updatedExpense = await recurringExpenseService.markRecurringExpenseAsPaid(
+        tempState.expenseId, 
+        user.id, 
+        amount, 
+        new Date(), 
+        true // Criar transação
+      );
+      
+      await bot.sendMessage(
+        chatId,
+        `✅ Pagamento de *${updatedExpense.name}* confirmado com sucesso!\n\nValor: R$ ${amount.toFixed(2)}\nData: ${new Date().toLocaleDateString('pt-BR')}\n\nA transação foi registrada automaticamente.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Limpar o estado temporário
+      global.userTempStates.delete(telegramId);
+      
+      // Mostrar próxima data de vencimento
+      if (updatedExpense.next_due_date) {
+        const nextDate = new Date(updatedExpense.next_due_date);
+        await bot.sendMessage(
+          chatId,
+          `📌 Próximo vencimento previsto para: ${nextDate.toLocaleDateString('pt-BR')}`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Erro no handleAmountMessages:', error);
+    await bot.sendMessage(
+      chatId,
+      "Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente mais tarde.",
+      { parse_mode: 'Markdown' }
+    );
+    
+    // Limpar o estado temporário em caso de erro
+    global.userTempStates.delete(telegramId);
+    return true;
+  }
+}
+
+
+
 /**
  * Processa callbacks relacionados a despesas recorrentes
  * @param {TelegramBot} bot - Instância do bot do Telegram
@@ -411,23 +704,166 @@ async function handleIncomeCallbacks(bot, callbackQuery) {
 async function handleExpenseCallbacks(bot, callbackQuery) {
   const { data } = callbackQuery;
   const chatId = callbackQuery.message.chat.id;
+  const { id: telegramId } = callbackQuery.from;
   
   // Responder ao callback para remover o "carregando"
   await bot.answerCallbackQuery(callbackQuery.id);
   
   try {
+    // Obter o usuário
+    const user = await supabaseService.getOrCreateUser(telegramId, callbackQuery.from.first_name, callbackQuery.from.last_name, callbackQuery.from.username);
+    
     if (data === 'expense_config' || data === 'expense_add') {
       // Iniciar fluxo de configuração de despesa
       await incomeConfigHandler.startExpensesConfigFlow(bot, callbackQuery.message);
-    } else if (data === 'expense_pay') {
-      // Implementar marcação de despesa como paga (próxima etapa)
-      await bot.sendMessage(chatId, "Funcionalidade de marcar despesa como paga será implementada em breve.");
-    } else if (data === 'expense_edit') {
-      // Implementar edição de despesa recorrente (próxima etapa)
-      await bot.sendMessage(chatId, "Funcionalidade de edição de despesa recorrente será implementada em breve.");
-    } else if (data === 'expense_delete') {
-      // Implementar remoção de despesa recorrente (próxima etapa)
-      await bot.sendMessage(chatId, "Funcionalidade de remoção de despesa recorrente será implementada em breve.");
+    } 
+    else if (data.startsWith('expense_pay:')) {
+      // Confirmação de pagamento de despesa específica
+      const expenseId = data.split(':')[1];
+      
+      // Verificar se a despesa existe
+      const expense = await recurringExpenseService.getRecurringExpenseById(expenseId, user.id);
+      
+      if (!expense) {
+        await bot.sendMessage(chatId, "Despesa recorrente não encontrada ou não pertence a você.");
+        return;
+      }
+      
+      // Perguntar se o valor pago foi diferente do esperado
+      const keyboard = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: `Sim, paguei R$ ${expense.amount.toFixed(2)}`, callback_data: `expense_pay_exact:${expenseId}` }
+            ],
+            [
+              { text: 'Não, paguei um valor diferente', callback_data: `expense_pay_different:${expenseId}` }
+            ]
+          ]
+        }
+      };
+      
+      await bot.sendMessage(
+        chatId,
+        `Você está confirmando o pagamento de *${expense.name}*.\n\nO valor esperado é R$ ${expense.amount.toFixed(2)}. Você pagou exatamente este valor?`,
+        { parse_mode: 'Markdown', ...keyboard }
+      );
+    }
+    else if (data.startsWith('expense_pay_exact:')) {
+      // Confirmação com valor exato
+      const expenseId = data.split(':')[1];
+      
+      // Confirmar o pagamento com o valor padrão
+      const updatedExpense = await recurringExpenseService.markRecurringExpenseAsPaid(
+        expenseId, 
+        user.id, 
+        null, // Valor padrão
+        new Date(), 
+        true // Criar transação
+      );
+      
+      await bot.sendMessage(
+        chatId,
+        `✅ Pagamento de *${updatedExpense.name}* confirmado com sucesso!\n\nValor: R$ ${updatedExpense.amount.toFixed(2)}\nData: ${new Date().toLocaleDateString('pt-BR')}\n\nA transação foi registrada automaticamente.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Mostrar próxima data de vencimento
+      if (updatedExpense.next_due_date) {
+        const nextDate = new Date(updatedExpense.next_due_date);
+        await bot.sendMessage(
+          chatId,
+          `📌 Próximo vencimento previsto para: ${nextDate.toLocaleDateString('pt-BR')}`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    }
+    else if (data.startsWith('expense_pay_different:')) {
+      // Confirmar com valor diferente
+      const expenseId = data.split(':')[1];
+      
+      // Armazenar o ID para processamento posterior
+      const userConfig = await userConfigService.getUserConfig(user.id);
+      userConfig.temp_expense_id = expenseId;
+      await userConfigService.saveUserConfig(user.id, userConfig);
+      
+      await bot.sendMessage(
+        chatId,
+        "Por favor, informe o valor que você pagou (apenas números, ex: 150.75):",
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Adicionar ao estado para saber que estamos esperando um valor
+      const processingUsers = processingUsers || new Set();
+      processingUsers.add(telegramId);
+      
+      // Definir um estado temporário para este usuário
+      if (!global.userTempStates) global.userTempStates = new Map();
+      global.userTempStates.set(telegramId, {
+        state: 'awaiting_expense_amount',
+        expenseId: expenseId
+      });
+      
+      setTimeout(() => {
+        if (processingUsers.has(telegramId)) {
+          processingUsers.delete(telegramId);
+        }
+      }, 60000); // Timeout de 1 minuto
+    }
+    else if (data === 'expense_list') {
+      // Mostrar lista de despesas (útil após confirmações)
+      await handleRecurringExpensesManagement(bot, callbackQuery.message);
+    }
+    else if (data.startsWith('expense_edit:')) {
+      // Implementação básica de edição (completa na próxima etapa)
+      const expenseId = data.split(':')[1];
+      await bot.sendMessage(
+        chatId, 
+        `Funcionalidade de edição para despesa ID ${expenseId} será implementada em breve.`
+      );
+    }
+    else if (data.startsWith('expense_delete:')) {
+      // Confirmar exclusão
+      const expenseId = data.split(':')[1];
+      
+      const keyboard = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Sim, excluir despesa', callback_data: `expense_delete_confirm:${expenseId}` }
+            ],
+            [
+              { text: 'Não, cancelar', callback_data: 'expense_list' }
+            ]
+          ]
+        }
+      };
+      
+      await bot.sendMessage(
+        chatId,
+        "Tem certeza que deseja excluir esta despesa recorrente? Esta ação não pode ser desfeita.",
+        keyboard
+      );
+    }
+    else if (data.startsWith('expense_delete_confirm:')) {
+      // Excluir despesa
+      const expenseId = data.split(':')[1];
+      
+      // Obter nome para mensagem de confirmação
+      const expense = await recurringExpenseService.getRecurringExpenseById(expenseId, user.id);
+      const expenseName = expense ? expense.name : "Despesa recorrente";
+      
+      // Excluir
+      await recurringExpenseService.deleteRecurringExpense(expenseId, user.id);
+      
+      await bot.sendMessage(
+        chatId,
+        `✅ Despesa recorrente "${expenseName}" excluída com sucesso.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      // Mostrar lista atualizada
+      setTimeout(() => handleRecurringExpensesManagement(bot, callbackQuery.message), 1000);
     }
   } catch (error) {
     console.error('Erro no handleExpenseCallbacks:', error);
@@ -438,6 +874,8 @@ async function handleExpenseCallbacks(bot, callbackQuery) {
     );
   }
 }
+
+
 
 /**
  * Configura atualizações periódicas para rendas e despesas
